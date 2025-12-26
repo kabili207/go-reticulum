@@ -7,6 +7,11 @@
 *.dll
 *.so
 *.dylib
+.gocache
+.gotmp
+.tmp
+python
+tests
 
 # Test binary, built with `go test -c`
 *.test

@@ -1,0 +1,297 @@
+package rns
+
+import (
+	"sync"
+	"testing"
+	"time"
+
+	umsgpack "main/rns/vendor"
+)
+
+type testPacket struct {
+	mu sync.Mutex
+
+	state    MessageState
+	raw      []byte
+	packetID uint64
+
+	tries int
+
+	timeout   float64
+	timeoutID uint64
+	instances int
+
+	timeoutCb   func(any)
+	deliveredCb func(any)
+}
+
+var (
+	testPktIDMu sync.Mutex
+	testPktID   uint64
+)
+
+func nextTestPacketID() uint64 {
+	testPktIDMu.Lock()
+	defer testPktIDMu.Unlock()
+	testPktID++
+	return testPktID
+}
+
+func (p *testPacket) setTimeout(cb func(any), timeout *float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if timeout != nil {
+		p.timeout = *timeout
+	}
+	p.timeoutCb = cb
+}
+
+func (p *testPacket) clearTimeoutLocked() {
+	p.timeoutID = 0
+}
+
+func (p *testPacket) send() {
+	p.mu.Lock()
+	p.tries++
+	p.state = MSGSTATE_SENT
+	p.instances++
+	p.timeoutID = nextTestPacketID()
+	timeoutID := p.timeoutID
+	timeout := p.timeout
+	p.mu.Unlock()
+
+	go func() {
+		defer func() {
+			p.mu.Lock()
+			p.instances--
+			p.mu.Unlock()
+		}()
+		time.Sleep(time.Duration(timeout * float64(time.Second)))
+		p.mu.Lock()
+		if p.timeoutID == timeoutID && p.timeoutID != 0 {
+			p.timeoutID = 0
+			p.state = MSGSTATE_FAILED
+			cb := p.timeoutCb
+			p.mu.Unlock()
+			if cb != nil {
+				cb(p)
+			}
+			return
+		}
+		p.mu.Unlock()
+	}()
+}
+
+func (p *testPacket) delivered() {
+	p.mu.Lock()
+	p.state = MSGSTATE_DELIVERED
+	p.clearTimeoutLocked()
+	cb := p.deliveredCb
+	p.mu.Unlock()
+	if cb != nil {
+		cb(p)
+	}
+}
+
+type channelOutletTest struct {
+	mu sync.Mutex
+
+	linkID uint64
+	mdu    int
+	rtt    float64
+	usable bool
+
+	defaultTimeout float64
+
+	packets []*testPacket
+
+	timeoutCallbacks int
+}
+
+func (o *channelOutletTest) Send(raw []byte) any {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	p := &testPacket{
+		state:    MSGSTATE_NEW,
+		raw:      append([]byte(nil), raw...),
+		packetID: nextTestPacketID(),
+		timeout:  o.defaultTimeout,
+	}
+	p.send()
+	o.packets = append(o.packets, p)
+	return p
+}
+
+func (o *channelOutletTest) Resend(packet any) any {
+	p := packet.(*testPacket)
+	p.send()
+	return p
+}
+
+func (o *channelOutletTest) Mdu() int      { return o.mdu }
+func (o *channelOutletTest) Rtt() float64  { return o.rtt }
+func (o *channelOutletTest) IsUsable() bool { return o.usable }
+func (o *channelOutletTest) String() string { return "test-outlet" }
+
+func (o *channelOutletTest) GetPacketState(packet any) MessageState {
+	p := packet.(*testPacket)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.state
+}
+
+func (o *channelOutletTest) TimedOut() {
+	o.mu.Lock()
+	o.timeoutCallbacks++
+	o.mu.Unlock()
+}
+
+func (o *channelOutletTest) SetPacketTimeoutCallback(packet any, cb func(any), timeout *float64) {
+	p := packet.(*testPacket)
+	p.setTimeout(cb, timeout)
+}
+
+func (o *channelOutletTest) SetPacketDeliveredCallback(packet any, cb func(any)) {
+	p := packet.(*testPacket)
+	p.mu.Lock()
+	p.deliveredCb = cb
+	p.mu.Unlock()
+}
+
+func (o *channelOutletTest) GetPacketID(packet any) any {
+	return packet.(*testPacket).packetID
+}
+
+type messageTest struct {
+	ID   string
+	Data string
+}
+
+func (m *messageTest) MsgType() uint16 { return 0xABCD }
+func (m *messageTest) Pack() ([]byte, error) {
+	return umsgpack.Packb([]any{m.ID, m.Data})
+}
+func (m *messageTest) Unpack(raw []byte) error {
+	var v []any
+	if err := umsgpack.Unpackb(raw, &v); err != nil {
+		return err
+	}
+	if len(v) >= 2 {
+		if s, ok := v[0].(string); ok {
+			m.ID = s
+		}
+		if s, ok := v[1].(string); ok {
+			m.Data = s
+		}
+	}
+	return nil
+}
+
+func TestChannel_SendOneRetry(t *testing.T) {
+	maybeParallel(t)
+	rtt := 0.01
+	outlet := &channelOutletTest{mdu: 500, rtt: rtt, usable: true, linkID: nextTestPacketID()}
+	ch := NewChannel(outlet)
+	defer ch.Close()
+	outlet.defaultTimeout = ch.getPacketTimeoutTime(1)
+
+	msg := &messageTest{ID: "id", Data: "test"}
+	if len(outlet.packets) != 0 {
+		t.Fatalf("expected no packets")
+	}
+
+	env, err := ch.Send(msg)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if env == nil || env.raw == nil {
+		t.Fatalf("expected envelope with raw")
+	}
+	if len(outlet.packets) != 1 {
+		t.Fatalf("expected 1 packet, got %d", len(outlet.packets))
+	}
+	if env.packet == nil {
+		t.Fatalf("expected env.packet")
+	}
+	if !env.tracked {
+		t.Fatalf("expected envelope tracked")
+	}
+
+	p := outlet.packets[0]
+	if env.packet != p {
+		t.Fatalf("expected envelope to reference the packet")
+	}
+	if env.tries != 1 || p.tries != 1 {
+		t.Fatalf("expected tries=1")
+	}
+	if p.instances != 1 {
+		t.Fatalf("expected instances=1")
+	}
+	if p.state != MSGSTATE_SENT {
+		t.Fatalf("expected packet state sent")
+	}
+
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(1) * 1.1 * float64(time.Second)))
+	if env.tries != 2 || p.tries != 2 {
+		t.Fatalf("expected tries=2 after timeout")
+	}
+
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(2) * 1.1 * float64(time.Second)))
+	if env.tries != 3 || p.tries != 3 {
+		t.Fatalf("expected tries=3 after 2nd timeout")
+	}
+	if p.state != MSGSTATE_SENT {
+		t.Fatalf("expected packet state sent")
+	}
+
+	p.delivered()
+	if p.state != MSGSTATE_DELIVERED {
+		t.Fatalf("expected delivered")
+	}
+
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(3) * 1.1 * float64(time.Second)))
+	if env.tracked {
+		t.Fatalf("expected envelope untracked after delivery")
+	}
+	p.mu.Lock()
+	instances := p.instances
+	p.mu.Unlock()
+	if instances != 0 {
+		t.Fatalf("expected instances=0, got %d", instances)
+	}
+}
+
+func TestChannel_SendTimeout(t *testing.T) {
+	maybeParallel(t)
+	rtt := 0.01
+	outlet := &channelOutletTest{mdu: 500, rtt: rtt, usable: true, linkID: nextTestPacketID()}
+	ch := NewChannel(outlet)
+	defer ch.Close()
+	outlet.defaultTimeout = ch.getPacketTimeoutTime(1)
+
+	msg := &messageTest{ID: "id", Data: "test"}
+	env, err := ch.Send(msg)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if env == nil || env.packet == nil {
+		t.Fatalf("expected envelope packet")
+	}
+	if len(outlet.packets) != 1 {
+		t.Fatalf("expected 1 packet")
+	}
+
+	// Allow retries to exceed maxTries (default 5).
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(1) * float64(time.Second)))
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(2) * float64(time.Second)))
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(3) * float64(time.Second)))
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(4) * float64(time.Second)))
+	time.Sleep(time.Duration(ch.getPacketTimeoutTime(5) * 1.1 * float64(time.Second)))
+
+	if env.tracked {
+		t.Fatalf("expected envelope untracked after timeout")
+	}
+	if outlet.timeoutCallbacks == 0 {
+		t.Fatalf("expected at least one outlet timeout callback")
+	}
+}

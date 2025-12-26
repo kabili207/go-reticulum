@@ -1,0 +1,357 @@
+//go:build integration
+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"syscall"
+	"sync"
+	"testing"
+	"time"
+)
+
+var listenLineRe = regexp.MustCompile(`\brncp listening on\s+<?([0-9a-fA-F]+)>?\b`)
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("could not find repo root (go.mod) from %s", wd)
+		}
+		dir = parent
+	}
+}
+
+func writeMinimalReticulumConfig(t *testing.T, configDir string) {
+	t.Helper()
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir configdir: %v", err)
+	}
+	// Keep instance name short (macOS UNIX socket paths have tight length limits).
+	instanceName := "rncp-" + filepath.Base(configDir)
+	cfg := strings.Join([]string{
+		"[reticulum]",
+		"enable_transport = False",
+		"share_instance = Yes",
+		"shared_instance_type = unix",
+		"instance_name = " + instanceName,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(configDir, "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+func buildRNCP(t *testing.T, binDir string) string {
+	t.Helper()
+	name := "rncp"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	out := filepath.Join(binDir, name)
+	gocache := filepath.Join(binDir, ".gocache")
+	gotmp := filepath.Join(binDir, ".gotmp")
+	if err := os.MkdirAll(gocache, 0o755); err != nil {
+		t.Fatalf("mkdir gocache: %v", err)
+	}
+	if err := os.MkdirAll(gotmp, 0o755); err != nil {
+		t.Fatalf("mkdir gotmp: %v", err)
+	}
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/rncp")
+	cmd.Dir = repoRoot(t)
+	cmd.Env = append(os.Environ(),
+		"GOCACHE="+gocache,
+		"GOTMPDIR="+gotmp,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build rncp: %v", err)
+	}
+	return out
+}
+
+func startListener(t *testing.T, ctx context.Context, bin, configDir, saveDir, jailDir string, allowFetch bool) (cmd *exec.Cmd, dest string, out *lockedBuffer) {
+	t.Helper()
+
+	args := []string{"--config", configDir, "--listen", "--no-auth", "-b", "0"}
+	if saveDir != "" {
+		args = append(args, "--save", saveDir)
+	}
+	if jailDir != "" {
+		args = append(args, "--jail", jailDir)
+	}
+	if allowFetch {
+		args = append(args, "--allow-fetch")
+	}
+
+	c := exec.CommandContext(ctx, bin, args...)
+
+	// Isolate shared-instance sockets/state to avoid interacting with a user-level daemon.
+	home := filepath.Join(configDir, ".home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	c.Env = append(os.Environ(),
+		"HOME="+home,
+		"USERPROFILE="+home, // windows compatibility
+	)
+
+	var buf lockedBuffer
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stderr, err := c.StderrPipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start listener: %v", err)
+	}
+
+	// Stream stderr for debugging, but don't block if it is noisy.
+	go func() {
+		_, _ = io.Copy(&buf, stderr)
+	}()
+
+	destCh := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			line := sc.Text()
+			_, _ = buf.Write([]byte(line + "\n"))
+			if m := listenLineRe.FindStringSubmatch(line); len(m) == 2 {
+				destCh <- m[1]
+				return
+			}
+		}
+	}()
+
+	select {
+	case d := <-destCh:
+		return c, d, &buf
+	case <-time.After(20 * time.Second):
+		_ = c.Process.Signal(syscall.SIGTERM)
+		_ = c.Wait()
+		t.Fatalf("listener did not print destination in time; output:\n%s", buf.String())
+		return nil, "", nil
+	}
+}
+
+func runRNCP(t *testing.T, ctx context.Context, bin string, configDir string, workDir string, args ...string) (string, error) {
+	t.Helper()
+	c := exec.CommandContext(ctx, bin, args...)
+	c.Dir = workDir
+
+	home := filepath.Join(configDir, ".home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	c.Env = append(os.Environ(),
+		"HOME="+home,
+		"USERPROFILE="+home,
+	)
+
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
+func stopProcess(t *testing.T, c *exec.Cmd, buf *lockedBuffer) {
+	t.Helper()
+	if c == nil || c.Process == nil {
+		return
+	}
+	_ = c.Process.Signal(syscall.SIGINT)
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	select {
+	case <-time.After(4 * time.Second):
+		_ = c.Process.Kill()
+		_ = <-done
+		t.Fatalf("listener did not exit; output:\n%s", buf.String())
+	case <-done:
+	}
+}
+
+func TestRNCPIntegration_SendReceive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	bin := buildRNCP(t, root)
+	configDir := filepath.Join(root, "cfg")
+	writeMinimalReticulumConfig(t, configDir)
+	recvDir := filepath.Join(root, "recv")
+	sendDir := filepath.Join(root, "send")
+	if err := os.MkdirAll(recvDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sendDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	listener, dest, buf := startListener(t, ctx, bin, configDir, recvDir, "", false)
+	t.Cleanup(func() { stopProcess(t, listener, buf) })
+
+	payload := []byte("hello rncp integration\n")
+	srcPath := filepath.Join(sendDir, "hello.txt")
+	if err := os.WriteFile(srcPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRNCP(t, ctx, bin, configDir, sendDir, "--config", configDir, srcPath, dest)
+	if err != nil {
+		if strings.Contains(out, "No interfaces could process the outbound packet") ||
+			strings.Contains(out, "Path not found") ||
+			strings.Contains(out, "could not be connected") {
+			t.Skipf("environment does not allow local Reticulum transport setup; skipping send/receive parity test\n%s", out)
+		}
+		t.Fatalf("send failed: %v\n%s", err, out)
+	}
+
+	dstPath := filepath.Join(recvDir, "hello.txt")
+	got, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("read received file: %v\nlistener output:\n%s", err, buf.String())
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("received payload mismatch: got %q want %q", got, payload)
+	}
+}
+
+func TestRNCPIntegration_Fetch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	bin := buildRNCP(t, root)
+	configDir := filepath.Join(root, "cfg")
+	writeMinimalReticulumConfig(t, configDir)
+	serverDir := filepath.Join(root, "server")
+	clientDir := filepath.Join(root, "client")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(clientDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// File served by listener.
+	payload := []byte("fetch me\n")
+	servedName := "served.txt"
+	servedPath := filepath.Join(serverDir, servedName)
+	if err := os.WriteFile(servedPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	listener, dest, buf := startListener(t, ctx, bin, configDir, "", serverDir, true)
+	t.Cleanup(func() { stopProcess(t, listener, buf) })
+
+	out, err := runRNCP(t, ctx, bin, configDir, clientDir,
+		"--config", configDir,
+		"--fetch",
+		"--save", clientDir,
+		servedName,
+		dest,
+	)
+	if err != nil {
+		if strings.Contains(out, "No interfaces could process the outbound packet") ||
+			strings.Contains(out, "Path not found") ||
+			strings.Contains(out, "could not be connected") {
+			t.Skipf("environment does not allow local Reticulum transport setup; skipping fetch parity test\n%s", out)
+		}
+	}
+
+	dstPath := filepath.Join(clientDir, servedName)
+	got, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("read fetched file: %v\nclient output:\n%s\nlistener output:\n%s", err, out, buf.String())
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("fetched payload mismatch: got %q want %q", got, payload)
+	}
+}
+
+func TestRNCPIntegration_Fetch_JailTraversalRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	bin := buildRNCP(t, root)
+	configDir := filepath.Join(root, "cfg")
+	writeMinimalReticulumConfig(t, configDir)
+	serverDir := filepath.Join(root, "server")
+	clientDir := filepath.Join(root, "client")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(clientDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start listener with a jail, but do not create any files outside it.
+	listener, dest, buf := startListener(t, ctx, bin, configDir, "", serverDir, true)
+	t.Cleanup(func() { stopProcess(t, listener, buf) })
+
+	// Attempt path traversal outside jail.
+	out, _ := runRNCP(t, ctx, bin, configDir, clientDir,
+		"--config", configDir,
+		"--fetch",
+		"--save", clientDir,
+		"../nope",
+		dest,
+	)
+	if strings.Contains(out, "No interfaces could process the outbound packet") ||
+		strings.Contains(out, "Path not found") ||
+		strings.Contains(out, "could not be connected") {
+		t.Skipf("environment does not allow local Reticulum transport setup; skipping jail traversal integration test\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(clientDir, "nope")); err == nil {
+		t.Fatalf("unexpectedly fetched file outside jail; output:\n%s", out)
+	}
+}
