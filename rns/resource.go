@@ -21,7 +21,7 @@ import (
 //  - var Reticulum struct{ ResourcePath string; HEADER_MAXSIZE, IFAC_MIN_SIZE int }
 //  - Packet contexts: PacketRESOURCE, PacketRESOURCE_ADV, PacketRESOURCE_REQ, ...
 //  - Transport.cache, Transport.cache_request, etc.
-//  - msgpack-библиотека (см. TODO)
+//  - msgpack-библиотека
 
 const (
 	// окно
@@ -102,14 +102,14 @@ type Resource struct {
 	collisionGuardLen int
 
 	// SDU и части
-	sdu           int
-	totalParts    int
-	parts         [][]byte // только payload, без заголовков
-	outgoingParts []*resourcePart
+	sdu                   int
+	totalParts            int
+	parts                 [][]byte // только payload, без заголовков
+	outgoingParts         []*resourcePart
 	outgoingPartByMapHash map[string]*Packet
-	sentParts     int
-	receivedCount int
-	outstanding   int
+	sentParts             int
+	receivedCount         int
+	outstanding           int
 
 	// окно
 	window            int
@@ -170,8 +170,8 @@ type Resource struct {
 	callback         func(*Resource)
 	progressCallback func(*Resource)
 
-	advPacket *Packet
-	advSent   time.Time
+	advPacket       *Packet
+	advSent         time.Time
 	lastRequestData []byte
 
 	// вспомогательные вещи
@@ -509,8 +509,6 @@ func NewResource(
 
 	// metadata
 	if metadata != nil && sentMetadataSize == 0 {
-		// TODO: msgpack-пакер, например:
-		// packed, err := msgpack.Marshal(metadata)
 		packed, err := msgpackMarshal(metadata)
 		if err != nil {
 			return nil, err
@@ -653,8 +651,6 @@ func NewResource(
 		var toSend []byte
 		if res.autoCompress && len(uncompressed) <= res.autoCompressLimit {
 			Log("Compressing resource data...", LOG_EXTREME)
-			// TODO: bz2 compress:
-			// compressed, err := bz2Compress(uncompressed)
 			compressed, err := bz2Compress(uncompressed)
 			if err != nil {
 				return nil, err
@@ -673,35 +669,35 @@ func NewResource(
 			toSend = uncompressed
 		}
 
-			// random hash префикс
-			// Python uses two random values:
-			// - a 4-byte prefix embedded in the encrypted stream (stripped by receiver)
-			// - a 4-byte random hash used for map hashes and resource hash validation
-			streamPrefix := IdentityGetRandomHash()[:RandomHashSize]
-			res.randomHash = IdentityGetRandomHash()[:RandomHashSize]
+		// random hash префикс
+		// Python uses two random values:
+		// - a 4-byte prefix embedded in the encrypted stream (stripped by receiver)
+		// - a 4-byte random hash used for map hashes and resource hash validation
+		streamPrefix := IdentityGetRandomHash()[:RandomHashSize]
+		res.randomHash = IdentityGetRandomHash()[:RandomHashSize]
 
-			// Resource hash and expected proof are computed over the decrypted payload
-			// (without stream prefix), plus randomHash.
-			hashInput := append(append([]byte(nil), toSend...), res.randomHash...)
-			res.hash = FullHash(hashInput)
-			proofInput := append(append([]byte(nil), toSend...), res.hash...)
-			res.expectedProof = FullHash(proofInput)
+		// Resource hash and expected proof are computed over the decrypted payload
+		// (without stream prefix), plus randomHash.
+		hashInput := append(append([]byte(nil), toSend...), res.randomHash...)
+		res.hash = FullHash(hashInput)
+		proofInput := append(append([]byte(nil), toSend...), res.hash...)
+		res.expectedProof = FullHash(proofInput)
 
-			payload := append(streamPrefix, toSend...)
+		payload := append(streamPrefix, toSend...)
 
-			// шифрование через link
-			enc, err := link.Encrypt(payload)
-			if err != nil {
-				return nil, err
-			}
-			res.encr = true
-			res.size = len(enc)
+		// шифрование через link
+		enc, err := link.Encrypt(payload)
+		if err != nil {
+			return nil, err
+		}
+		res.encr = true
+		res.size = len(enc)
 
-			if originalHash != nil {
-				res.originalHash = originalHash
-			} else {
-				res.originalHash = res.hash
-			}
+		if originalHash != nil {
+			res.originalHash = originalHash
+		} else {
+			res.originalHash = res.hash
+		}
 
 		// части и hashmap
 		hashmapEntries := int(math.Ceil(float64(res.size) / float64(res.sdu)))
@@ -778,13 +774,13 @@ func (r *Resource) buildHashmap(enc []byte, entries int) (bool, error) {
 			return false, err
 		}
 
-			r.outgoingParts = append(r.outgoingParts, &resourcePart{
-				packet:  partPkt,
-				mapHash: mapHash,
-			})
-			r.hashmap = append(r.hashmap, mapHash)
-			r.outgoingPartByMapHash[string(mapHash)] = partPkt
-		}
+		r.outgoingParts = append(r.outgoingParts, &resourcePart{
+			packet:  partPkt,
+			mapHash: mapHash,
+		})
+		r.hashmap = append(r.hashmap, mapHash)
+		r.outgoingPartByMapHash[string(mapHash)] = partPkt
+	}
 	r.hashmapHeight = len(r.hashmap)
 	Log(fmt.Sprintf("Hashmap computation concluded in %.3f seconds",
 		time.Since(hashmapStart).Seconds()), LOG_EXTREME)
@@ -1189,8 +1185,8 @@ func (r *Resource) Assemble() {
 		return
 	}
 
-		payload := fullData
-		if r.hasMetadata && r.segmentIndex == 1 {
+	payload := fullData
+	if r.hasMetadata && r.segmentIndex == 1 {
 		if len(fullData) < 3 {
 			r.status = ResourceCorrupt
 			return
@@ -1203,17 +1199,17 @@ func (r *Resource) Assemble() {
 		packedMeta := fullData[3 : 3+metaSize]
 		_ = os.WriteFile(r.metaStoragePath, packedMeta, 0o644)
 		payload = fullData[3+metaSize:]
-		}
+	}
 
-		if dir := filepath.Dir(r.storagePath); dir != "" {
-			_ = os.MkdirAll(dir, 0o755)
-		}
-		f, err := os.OpenFile(r.storagePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			Log(fmt.Sprintf("Error opening resource file: %v", err), LOG_ERROR)
-			r.status = ResourceCorrupt
-			return
-		}
+	if dir := filepath.Dir(r.storagePath); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	f, err := os.OpenFile(r.storagePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		Log(fmt.Sprintf("Error opening resource file: %v", err), LOG_ERROR)
+		r.status = ResourceCorrupt
+		return
+	}
 	if _, err = f.Write(payload); err != nil {
 		Log(fmt.Sprintf("Error writing resource file: %v", err), LOG_ERROR)
 		r.status = ResourceCorrupt

@@ -1,0 +1,76 @@
+package rns
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestIntegration_TransportExitHandler_PersistsTables(t *testing.T) {
+	requireIntegration(t)
+
+	prevOwner := Owner
+	prevTransportEnabled := transportEnabled
+	prevPathTable := pathTable
+	prevPacketCache := packetCache
+	prevInterfaces := Interfaces
+
+	dir := t.TempDir()
+	Owner = &Reticulum{
+		StoragePath:  filepath.Join(dir, "storage"),
+		CachePath:    filepath.Join(dir, "storage", "cache"),
+		ResourcePath: filepath.Join(dir, "storage", "resources"),
+	}
+	transportEnabled = true
+	pathTable = make(map[hashKey]*PathEntry)
+	packetCache = make(map[string]*cachedPacket)
+	Interfaces = nil
+
+	t.Cleanup(func() {
+		Owner = prevOwner
+		transportEnabled = prevTransportEnabled
+		pathTable = prevPathTable
+		packetCache = prevPacketCache
+		Interfaces = prevInterfaces
+	})
+
+	_ = os.MkdirAll(filepath.Join(Owner.CachePath, "announces"), 0o755)
+	ifc := &Interface{Name: "if0", Type: "Test"}
+	Interfaces = append(Interfaces, ifc)
+
+	dst := make([]byte, truncatedHashBytes)
+	for i := range dst {
+		dst[i] = byte(i + 1)
+	}
+	key, ok := makeHashKey(dst)
+	if !ok {
+		t.Fatalf("makeHashKey failed")
+	}
+	packetHash := make([]byte, sha256Bits/8)
+	for i := range packetHash {
+		packetHash[i] = byte(0xAA + i)
+	}
+	packetCache[string(packetHash)] = &cachedPacket{Raw: []byte("not-a-real-packet")}
+	pathTable[key] = &PathEntry{
+		NextHop:       []byte{1, 2, 3},
+		RecvInterface: ifc,
+		Hops:          1,
+		Timestamp:     time.Now(),
+		ExpiresAt:     time.Now().Add(time.Hour),
+		RandomBlobs:   [][]byte{[]byte("x")},
+		PacketHash:    packetHash,
+	}
+
+	TransportExitHandler()
+
+	if _, err := os.Stat(filepath.Join(Owner.StoragePath, "packet_hashlist")); err != nil {
+		t.Fatalf("expected packet_hashlist file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(Owner.StoragePath, "destination_table")); err != nil {
+		t.Fatalf("expected destination_table file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(Owner.StoragePath, "tunnels")); err != nil {
+		t.Fatalf("expected tunnels file: %v", err)
+	}
+}

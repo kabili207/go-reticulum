@@ -174,3 +174,46 @@ func TestRawChannelStream_NoContentLoss(t *testing.T) {
 		t.Fatalf("payload mismatch: got %d bytes want %d", got.Len(), len(want))
 	}
 }
+
+func TestRawChannelReader_ReadyCallback_BufferedSize(t *testing.T) {
+	oa := newLoopOutlet("a", 65535)
+	ob := newLoopOutlet("b", 65535)
+
+	ca := NewChannel(oa)
+	cb := NewChannel(ob)
+	oa.peer.Store(cb)
+	ob.peer.Store(ca)
+
+	reader := NewRawChannelReader(1, cb)
+	defer reader.Close()
+
+	ready := make(chan int, 4)
+	reader.AddReadyCallback(func(n int) { ready <- n })
+
+	writer := NewRawChannelWriter(1, ca)
+	defer writer.Close()
+
+	if _, err := writer.Write([]byte("1234567890")); err != nil {
+		t.Fatalf("write1: %v", err)
+	}
+	if _, err := writer.Write([]byte("abcde")); err != nil {
+		t.Fatalf("write2: %v", err)
+	}
+
+	var got []int
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for len(got) < 2 {
+		select {
+		case n := <-ready:
+			got = append(got, n)
+		case <-deadline.C:
+			t.Fatalf("timeout waiting for callbacks, got=%v", got)
+		}
+	}
+
+	// Python passes len(self._buffer) after each received message.
+	if !((got[0] == 10 && got[1] == 15) || (got[0] == 15 && got[1] == 10)) {
+		t.Fatalf("unexpected ready sizes: %v", got)
+	}
+}

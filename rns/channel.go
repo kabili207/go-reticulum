@@ -404,7 +404,8 @@ func (c *Channel) packetKey(packet any) string {
 	if id == nil {
 		return fmt.Sprintf("%p", packet)
 	}
-	return fmt.Sprintf("%p:%v", packet, id)
+	// Python parity: packets are tracked by the outlet-provided packet id.
+	return fmt.Sprintf("%v", id)
 }
 
 func (c *Channel) trackPacketLocked(env *Envelope) {

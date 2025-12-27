@@ -132,11 +132,9 @@ func DestinationExpandName(identity *Identity, appName string, aspects ...string
 
 // Hash = Destination.hash(...)
 func DestinationHash(identity interface{}, appName string, aspects ...string) ([]byte, error) {
-	var id *Identity
-	if v, ok := identity.(*Identity); ok && v != nil {
-		id = v
-	}
-	name, err := DestinationExpandName(id, appName, aspects...)
+	// Python parity: Destination.hash() computes name_hash from expand_name(None,...),
+	// ie. without appending identity hexhash, even when an identity is supplied.
+	name, err := DestinationExpandName(nil, appName, aspects...)
 	if err != nil {
 		return nil, err
 	}

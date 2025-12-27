@@ -23,6 +23,23 @@ const (
 	Tunnel          = 0x03
 )
 
+// Python parity: Transport reachability values.
+const (
+	ReachabilityUnreachable = 0x00
+	ReachabilityDirect      = 0x01
+	ReachabilityTransport   = 0x02
+)
+
+// Python parity: Transport path state values.
+const (
+	TransportStateUnknown      = 0x00
+	TransportStateUnresponsive = 0x01
+	TransportStateResponsive   = 0x02
+)
+
+// TransportAppName mirrors Transport.APP_NAME in the Python implementation.
+const TransportAppName = "rnstransport"
+
 const (
 	MaxReceipts                 = 1024
 	TransportPathRequestTimeout = 15.0

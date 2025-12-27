@@ -206,7 +206,7 @@ func NewRPCListener(network, addr string, key []byte) (RPCListener, error) {
 		return &gobRPCListener{
 			Listener: ln,
 			authKey:  append([]byte(nil), key...),
-			addr:     addr,
+			addr:     ln.Addr().String(),
 		}, nil
 	}
 }
@@ -391,8 +391,8 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		return nil, errAlreadyRunning
 	}
 
-	// Basic platform checks (Python does more here).
-	// Keep this lightweight so the Go port can run in constrained environments.
+	// Python parity: run platform checks early (mostly a no-op in Go).
+	vendor.PlatformChecks()
 
 	r := &Reticulum{
 		UserDir:            osUserDir(),
@@ -633,6 +633,13 @@ func exitHandler() {
 	}
 	exitHandlerRan = true
 
+	// Python parity: the shared/master instance should not exit while local clients
+	// are still connected (unless forcibly terminated). Allow a configurable timeout
+	// for test/sandbox environments via `RNS_EXIT_WAIT_TIMEOUT` (seconds).
+	if instance != nil && instance.IsSharedInstance {
+		waitForLocalClientsToDisconnect(exitWaitTimeoutFromEnv())
+	}
+
 	if !interfaceDetachHandler {
 		DetachInterfaces()
 	}
@@ -656,6 +663,35 @@ func sigtermHandler() {
 	DetachInterfaces()
 	interfaceDetachHandler = true
 	Exit()
+}
+
+func exitWaitTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("RNS_EXIT_WAIT_TIMEOUT"))
+	if raw == "" {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(raw, 64)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func waitForLocalClientsToDisconnect(timeout time.Duration) bool {
+	started := time.Now()
+	reported := false
+	for len(LocalClientInterfaces) > 0 {
+		if !reported {
+			Logf(LogDebug, "Waiting for %d local client(s) to disconnect before exiting", len(LocalClientInterfaces))
+			reported = true
+		}
+		if timeout > 0 && time.Since(started) > timeout {
+			Logf(LogWarning, "Timed out waiting for local clients to disconnect (%d remaining)", len(LocalClientInterfaces))
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return true
 }
 
 // ---------------- конфиг ----------------

@@ -261,6 +261,65 @@ func TestChannel_SendOneRetry(t *testing.T) {
 	}
 }
 
+type packetIDOnly struct {
+	id uint64
+}
+
+type channelOutletIDOnly struct {
+	mdu int
+	rtt float64
+
+	lastDeliveredCb func(any)
+}
+
+func (o *channelOutletIDOnly) Send(_ []byte) any { return &packetIDOnly{id: 1} }
+func (o *channelOutletIDOnly) Resend(packet any) any {
+	return packet
+}
+func (o *channelOutletIDOnly) Mdu() int       { return o.mdu }
+func (o *channelOutletIDOnly) Rtt() float64   { return o.rtt }
+func (o *channelOutletIDOnly) IsUsable() bool { return true }
+func (o *channelOutletIDOnly) TimedOut()      {}
+func (o *channelOutletIDOnly) String() string { return "id-only" }
+func (o *channelOutletIDOnly) GetPacketState(_ any) MessageState {
+	return MSGSTATE_SENT
+}
+func (o *channelOutletIDOnly) SetPacketTimeoutCallback(_ any, _ func(any), _ *float64) {}
+func (o *channelOutletIDOnly) SetPacketDeliveredCallback(_ any, cb func(any)) {
+	o.lastDeliveredCb = cb
+}
+func (o *channelOutletIDOnly) GetPacketID(packet any) any {
+	return packet.(*packetIDOnly).id
+}
+
+func TestChannel_PacketKey_UsesPacketIDNotPointer(t *testing.T) {
+	t.Parallel()
+
+	outlet := &channelOutletIDOnly{mdu: 500, rtt: 0.01}
+	ch := NewChannel(outlet)
+	defer ch.Close()
+
+	if err := ch.RegisterMessageType(&messageTest{}); err != nil {
+		t.Fatalf("RegisterMessageType: %v", err)
+	}
+	env, err := ch.Send(&messageTest{ID: "id", Data: "data"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if env == nil || outlet.lastDeliveredCb == nil {
+		t.Fatalf("missing envelope/callback")
+	}
+
+	// Simulate a callback arriving with a different packet instance but the same packet id.
+	outlet.lastDeliveredCb(&packetIDOnly{id: 1})
+
+	ch.lock.RLock()
+	defer ch.lock.RUnlock()
+	if len(ch.txRing) != 0 {
+		t.Fatalf("expected txRing cleared after delivery")
+	}
+}
+
 func TestChannel_SendTimeout(t *testing.T) {
 	maybeParallel(t)
 	rtt := 0.01

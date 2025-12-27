@@ -183,12 +183,9 @@ func (r *RawChannelReader) handleMessage(msg MessageBase) bool {
 		r.cond.Broadcast()
 	}
 
-	// Python parity: ready callbacks receive the number of bytes made available by
-	// the received StreamDataMessage, not the total buffered bytes.
-	readyBytes := 0
-	if sdm.Data != nil {
-		readyBytes = len(sdm.Data)
-	}
+	// Python parity: ready callbacks receive the total buffered byte count
+	// after appending the new StreamDataMessage data.
+	readyBytes := len(r.buffer)
 	for _, listener := range r.listeners {
 		cb := listener
 		go func(cb ReadyCallback) {
@@ -356,13 +353,22 @@ func (w *RawChannelWriter) Write(b []byte) (int, error) {
 		return 0, nil
 	}
 
-	return w.writeInternal(b, true)
+	// Python parity: RawChannelWriter.write() is non-blocking and returns 0
+	// when the channel/link is not ready.
+	return w.writeInternal(b, false)
 }
 
 func (w *RawChannelWriter) WriteNonBlocking(b []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writeInternal(b, false)
+}
+
+// WriteBlocking is used by buffered writers to block until progress can be made.
+func (w *RawChannelWriter) WriteBlocking(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writeInternal(b, true)
 }
 
 func (w *RawChannelWriter) writeInternal(b []byte, block bool) (int, error) {
@@ -664,7 +670,7 @@ func (w *ChannelBufferedWriter) Write(p []byte) (int, error) {
 		written := 0
 		remaining := p
 		for len(remaining) > 0 {
-			n, err := w.raw.Write(remaining)
+			n, err := w.raw.WriteBlocking(remaining)
 			written += n
 			if err != nil {
 				return written, err
@@ -715,7 +721,7 @@ func (w *ChannelBufferedWriter) Flush() error {
 	for len(w.buf) > 0 {
 		// Python parity: BufferedWriter.flush() blocks until all buffered bytes
 		// are written (or an error occurs).
-		n, err := w.raw.Write(w.buf)
+		n, err := w.raw.WriteBlocking(w.buf)
 		if err != nil {
 			return err
 		}

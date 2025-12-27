@@ -403,3 +403,190 @@ func TestIntegration_Resource_MediumLarge_Slow(t *testing.T) {
 		l.Teardown()
 	})
 }
+
+func TestIntegration_Resource_RejectStrategy(t *testing.T) {
+	requireIntegration(t)
+	resetKnownDestinationsForTest()
+	withIntegrationTransport(t, func() {
+		prvHex := "f8953ffaf607627e615603ff1530c82c434cf87c07179dd7689ea776f30b964cfb7ba6164af00c5111a45e69e57d885e1285f8dbfe3a21e95ae17cf676b0f8b7"
+		prv, _ := hex.DecodeString(prvHex)
+		id, err := IdentityFromBytes(prv)
+		if err != nil {
+			t.Fatalf("IdentityFromBytes: %v", err)
+		}
+
+		const appName = "rns_unit_tests"
+		destOut, err := NewDestination(id, DestinationOUT, DestinationSINGLE, appName, "resource", "reject")
+		if err != nil {
+			t.Fatalf("NewDestination(out): %v", err)
+		}
+		_, err = NewDestination(id, DestinationIN, DestinationSINGLE, appName, "resource", "reject")
+		if err != nil {
+			t.Fatalf("NewDestination(in): %v", err)
+		}
+
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		if err != nil {
+			t.Fatalf("NewOutgoingLink: %v", err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if l.Status == LinkActive {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if l.Status != LinkActive {
+			t.Fatalf("expected link active, got %d", l.Status)
+		}
+
+		peer := findPeerLinkTest(l)
+		if peer == nil {
+			t.Fatalf("expected peer link")
+		}
+		if err := peer.SetResourceStrategy(LinkAcceptNone); err != nil {
+			t.Fatalf("peer SetResourceStrategy: %v", err)
+		}
+
+		done := make(chan *Resource, 1)
+		data := make([]byte, 1024)
+		_, _ = rand.Read(data)
+		timeoutSeconds := 10.0
+		res, err := NewResource(
+			data,
+			nil,
+			l,
+			nil,
+			true,
+			true,
+			func(r *Resource) { done <- r },
+			nil,
+			&timeoutSeconds,
+			0,
+			nil,
+			nil,
+			false,
+			0,
+		)
+		if err != nil || res == nil {
+			t.Fatalf("NewResource: %v", err)
+		}
+
+		select {
+		case r := <-done:
+			if r == nil {
+				t.Fatalf("callback returned nil resource")
+			}
+			if r.Status() != ResourceRejected {
+				t.Fatalf("expected resource rejected, got status=%d", r.Status())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting resource rejection, status=%d", res.Status())
+		}
+
+		l.Teardown()
+	})
+}
+
+func TestIntegration_Resource_ResponseToRequest_AsResource(t *testing.T) {
+	requireIntegration(t)
+	resetKnownDestinationsForTest()
+	withIntegrationTransport(t, func() {
+		prvHex := "f8953ffaf607627e615603ff1530c82c434cf87c07179dd7689ea776f30b964cfb7ba6164af00c5111a45e69e57d885e1285f8dbfe3a21e95ae17cf676b0f8b7"
+		prv, _ := hex.DecodeString(prvHex)
+		id, err := IdentityFromBytes(prv)
+		if err != nil {
+			t.Fatalf("IdentityFromBytes: %v", err)
+		}
+
+		const appName = "rns_unit_tests"
+		destOut, err := NewDestination(id, DestinationOUT, DestinationSINGLE, appName, "resource", "response")
+		if err != nil {
+			t.Fatalf("NewDestination(out): %v", err)
+		}
+		destIn, err := NewDestination(id, DestinationIN, DestinationSINGLE, appName, "resource", "response")
+		if err != nil {
+			t.Fatalf("NewDestination(in): %v", err)
+		}
+
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		if err != nil {
+			t.Fatalf("NewOutgoingLink: %v", err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if l.Status == LinkActive {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if l.Status != LinkActive {
+			t.Fatalf("expected link active, got %d", l.Status)
+		}
+
+		peer := findPeerLinkTest(l)
+		if peer == nil {
+			t.Fatalf("expected peer link")
+		}
+		if err := peer.SetResourceStrategy(LinkAcceptAll); err != nil {
+			t.Fatalf("peer SetResourceStrategy: %v", err)
+		}
+
+		var expected []byte
+		if err := destIn.RegisterRequestHandler(
+			"/big",
+			func(_ string, _ any, _ []byte, _ []byte, _ *Identity, _ time.Time) any {
+				// Force a response resource by exceeding the MDU.
+				payload := make([]byte, l.MDU+64)
+				_, _ = rand.Read(payload)
+				expected = payload
+				return payload
+			},
+			DestinationALLOW_ALL,
+			nil,
+			true,
+		); err != nil {
+			t.Fatalf("RegisterRequestHandler: %v", err)
+		}
+
+		done := make(chan *RequestReceipt, 1)
+		rr := l.Request(
+			"/big",
+			map[string]any{"ping": "pong"},
+			func(r *RequestReceipt) { done <- r },
+			func(r *RequestReceipt) { done <- r },
+			nil,
+			5,
+		)
+		if rr == nil {
+			t.Fatalf("Request returned nil")
+		}
+
+		select {
+		case r := <-done:
+			if r.Status() != ReceiptReady {
+				t.Fatalf("expected receipt ready, got %d", r.Status())
+			}
+			gotAny := r.Response()
+			got, ok := gotAny.([]byte)
+			if !ok {
+				t.Fatalf("expected []byte response, got %T", gotAny)
+			}
+			if len(got) != len(expected) {
+				t.Fatalf("response size mismatch: got %d want %d", len(got), len(expected))
+			}
+			for i := range expected {
+				if got[i] != expected[i] {
+					t.Fatalf("response mismatch at %d", i)
+				}
+			}
+			if r.ResponseTransferSize() == 0 {
+				t.Fatalf("expected non-zero response transfer size")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timeout waiting request response, status=%d progress=%.3f", rr.Status(), rr.Progress())
+		}
+
+		l.Teardown()
+	})
+}

@@ -552,8 +552,14 @@ func readKnownDestinationsFromDisk(path string) (map[string]*knownDestinationEnt
 }
 
 func encodeKnownDestinations(entries map[string]*knownDestinationEntry) ([]byte, error) {
+	// Note: Go cannot use []byte as a map key, so we store destination hashes as
+	// strings (raw bytes) when persisting. decodeKnownDestinations accepts both
+	// Python's bytes-keyed format and this Go string-keyed format.
 	payload := make(map[string][]any, len(entries))
 	for key, entry := range entries {
+		if len(key) != ReticulumTruncatedHashLength/8 {
+			continue
+		}
 		payload[key] = []any{
 			entry.SeenAt,
 			entry.PacketHash,
@@ -565,27 +571,48 @@ func encodeKnownDestinations(entries map[string]*knownDestinationEntry) ([]byte,
 }
 
 func decodeKnownDestinations(data []byte) (map[string]*knownDestinationEntry, error) {
-	var raw map[string][]any
+	// Python compatibility: keys can be bytes; older Go versions might have written string keys.
+	var raw map[any]any
 	if err := umsgpack.Unpackb(data, &raw); err != nil {
 		return nil, err
 	}
+
 	entries := make(map[string]*knownDestinationEntry, len(raw))
-	for key, value := range raw {
-		if len(key) != ReticulumTruncatedHashLength/8 {
+	for k, v := range raw {
+		var keyBytes []byte
+		switch kt := k.(type) {
+		case []byte:
+			keyBytes = kt
+		case string:
+			keyBytes = []byte(kt)
+		default:
 			continue
 		}
+		if len(keyBytes) != ReticulumTruncatedHashLength/8 {
+			continue
+		}
+		key := string(keyBytes)
+
+		var values []any
+		switch vt := v.(type) {
+		case []any:
+			values = vt
+		default:
+			continue
+		}
+
 		entry := &knownDestinationEntry{}
-		if len(value) > 0 {
-			entry.SeenAt = asFloat64(value[0])
+		if len(values) > 0 {
+			entry.SeenAt = asFloat64(values[0])
 		}
-		if len(value) > 1 {
-			entry.PacketHash = asBytes(value[1])
+		if len(values) > 1 {
+			entry.PacketHash = asBytes(values[1])
 		}
-		if len(value) > 2 {
-			entry.PublicKey = asBytes(value[2])
+		if len(values) > 2 {
+			entry.PublicKey = asBytes(values[2])
 		}
-		if len(value) > 3 {
-			entry.AppData = asBytes(value[3])
+		if len(values) > 3 {
+			entry.AppData = asBytes(values[3])
 		}
 		if len(entry.PublicKey) != identityPubKeyLen {
 			continue
