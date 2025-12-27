@@ -616,6 +616,12 @@ func (d *Destination) requestAllowed(handler *RequestHandler, remote *Identity) 
 }
 
 func (d *Destination) Receive(packet *Packet) bool {
+	// Ensure the packet is associated with this destination. This is required
+	// for destination-side proof generation (Packet.Prove).
+	if packet != nil && packet.Destination == nil {
+		packet.Destination = d
+	}
+
 	if packet.PacketType == PacketLINKREQUEST {
 		plaintext := packet.Data
 		d.incomingLinkRequest(plaintext, packet)
@@ -639,6 +645,8 @@ func (d *Destination) Receive(packet *Packet) bool {
 				d.callbacks.Packet(plaintext, packet)
 			}()
 		}
+		// Python parity: apply proof strategy for incoming data packets.
+		d.handleProofStrategy(packet)
 	}
 	return true
 }
@@ -1040,7 +1048,9 @@ func (d *Destination) handleProofStrategy(packet *Packet) {
 	}
 	switch d.proofStrategy {
 	case DestinationPROVE_ALL:
-		packet.Prove(d)
+		// Python parity: proofs are sent to the packet's ProofDestination (hash=packet hash),
+		// not back to the destination itself.
+		packet.Prove(nil)
 	case DestinationPROVE_APP:
 		if cb := d.callbacks.ProofRequested; cb != nil {
 			prove := false
@@ -1053,7 +1063,7 @@ func (d *Destination) handleProofStrategy(packet *Packet) {
 				prove = cb(packet)
 			}()
 			if prove {
-				packet.Prove(d)
+				packet.Prove(nil)
 			}
 		}
 	}

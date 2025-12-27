@@ -389,6 +389,10 @@ func (l *Link) SetLinkClosedCallback(cb func(*Link)) {
 	l.callbacks.LinkClosed = cb
 }
 
+func (l *Link) SetPacketCallback(cb func([]byte, *Packet)) {
+	l.callbacks.Packet = cb
+}
+
 func (l *Link) SetResourceCallback(cb func(*ResourceAdvertisement) bool) {
 	l.callbacks.Resource = cb
 }
@@ -978,6 +982,29 @@ func (l *Link) Receive(packet *Packet) {
 				continue
 			}
 			_ = rc.validateLinkProof(packet.Data, l, packet)
+		}
+		return
+	}
+
+	// Plain link data packets (PacketCtxNone) are delivered to the Packet callback.
+	// This mirrors Python Link.set_packet_callback() behaviour.
+	if packet.PacketType == PacketTypeData && packet.Context == PacketCtxNone {
+		plaintext := packet.Data
+		if pt, err := l.Decrypt(packet.Data); err == nil && len(pt) > 0 {
+			plaintext = pt
+		} else if err != nil {
+			Log(fmt.Sprintf("%s failed to decrypt packet: %v", l, err), LOG_WARNING)
+			return
+		}
+		if cb := l.callbacks.Packet; cb != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						Log(fmt.Sprintf("Packet callback panic on %s: %v", l, r), LOG_ERROR)
+					}
+				}()
+				cb(plaintext, packet)
+			}()
 		}
 		return
 	}

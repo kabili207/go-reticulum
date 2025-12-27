@@ -2,6 +2,8 @@ package rns
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
 	Cryptography "main/rns/cryptography"
@@ -63,6 +65,14 @@ var (
 )
 
 type hashKey [truncatedHashBytes]byte
+
+// AnnounceHandler mirrors the Python announce handler callback.
+// If AspectFilter returns a non-empty string, only announces whose NAME_HASH
+// matches the filter will be delivered.
+type AnnounceHandler interface {
+	AspectFilter() string
+	ReceivedAnnounce(destinationHash []byte, announcedIdentity *Identity, appData []byte)
+}
 
 var (
 	Owner *Reticulum
@@ -149,9 +159,131 @@ var (
 	discoveryPRTagFIFO []string
 	maxPRTags          = 32000
 
+	announceHandlersMu sync.RWMutex
+	announceHandlers   []AnnounceHandler
+
 	// сюда же кладёшь все свои таблицы:
 	// AnnounceTable, PathTable, ReverseTable, LinkTable, DiscoveryPathRequests, ...
 )
+
+// RegisterAnnounceHandler registers an announce handler with the transport.
+// This is the Go equivalent of `RNS.Transport.register_announce_handler()`.
+func RegisterAnnounceHandler(handler AnnounceHandler) {
+	if handler == nil {
+		return
+	}
+	announceHandlersMu.Lock()
+	for _, existing := range announceHandlers {
+		if existing == handler {
+			announceHandlersMu.Unlock()
+			return
+		}
+	}
+	announceHandlers = append(announceHandlers, handler)
+	announceHandlersMu.Unlock()
+}
+
+// DeregisterAnnounceHandler removes a previously registered announce handler.
+func DeregisterAnnounceHandler(handler AnnounceHandler) bool {
+	if handler == nil {
+		return false
+	}
+	announceHandlersMu.Lock()
+	defer announceHandlersMu.Unlock()
+	for i, existing := range announceHandlers {
+		if existing == handler {
+			announceHandlers = append(announceHandlers[:i], announceHandlers[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func announceNameHashAndAppData(packet *Packet) (nameHash []byte, appData []byte, announced *Identity, ok bool) {
+	if packet == nil || packet.PacketType != PacketTypeAnnounce {
+		return nil, nil, nil, false
+	}
+	data := packet.Data
+	nameHashLen := IdentityNameHashLength / 8
+	minLen := identityPubKeyLen + nameHashLen + announceRandomHashLen + ed25519.SignatureSize
+	if len(data) < minLen {
+		return nil, nil, nil, false
+	}
+
+	publicKey := data[:identityPubKeyLen]
+	offset := identityPubKeyLen
+	nameHash = data[offset : offset+nameHashLen]
+	offset += nameHashLen
+	offset += announceRandomHashLen
+
+	if packet.ContextFlag == FlagSet {
+		if len(data) < offset+x25519KeyLen+ed25519.SignatureSize {
+			return nil, nil, nil, false
+		}
+		offset += x25519KeyLen
+	}
+	if len(data) < offset+ed25519.SignatureSize {
+		return nil, nil, nil, false
+	}
+	offset += ed25519.SignatureSize
+	if len(data) > offset {
+		appData = data[offset:]
+	}
+
+	announced = &Identity{curve: ecdh.X25519()}
+	if err := announced.LoadPublicKey(publicKey); err != nil {
+		return nil, nil, nil, false
+	}
+	return append([]byte(nil), nameHash...), append([]byte(nil), appData...), announced, true
+}
+
+func announceHandlerWants(handler AnnounceHandler, announceNameHash []byte) bool {
+	if handler == nil {
+		return false
+	}
+	filter := strings.TrimSpace(handler.AspectFilter())
+	if filter == "" {
+		return true
+	}
+	want := FullHash([]byte(filter))[:IdentityNameHashLength/8]
+	return bytes.Equal(want, announceNameHash)
+}
+
+func dispatchAnnounceHandlers(packet *Packet) {
+	if packet == nil {
+		return
+	}
+	nameHash, appData, announced, ok := announceNameHashAndAppData(packet)
+	if !ok {
+		return
+	}
+
+	announceHandlersMu.RLock()
+	handlers := append([]AnnounceHandler(nil), announceHandlers...)
+	announceHandlersMu.RUnlock()
+
+	for _, h := range handlers {
+		if !announceHandlerWants(h, nameHash) {
+			continue
+		}
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					Logf(LogError, "Announce handler panic: %v", rec)
+				}
+			}()
+			h.ReceivedAnnounce(copyBytes(packet.DestinationHash), announced, appData)
+		}()
+	}
+}
+
+// NotifyAnnounceHandlers triggers delivery to registered announce handlers for
+// a decoded announce packet. This is primarily useful for applications/tests
+// that already have a parsed announce packet and want to reuse the handler
+// mechanism without going through full transport ingress.
+func NotifyAnnounceHandlers(packet *Packet) {
+	dispatchAnnounceHandlers(packet)
+}
 
 func removeLocalClientInterface(ifc *Interface) {
 	if ifc == nil {
@@ -2844,6 +2976,9 @@ func handleInboundAnnounce(p *Packet, ifc *Interface, fromLocal bool) {
 	if !IdentityValidateAnnounce(p, false) {
 		return
 	}
+
+	// Notify application-level announce handlers (Python parity).
+	dispatchAnnounceHandlers(p)
 
 	now := time.Now()
 	recordAnnounceRebroadcast(p, now)
