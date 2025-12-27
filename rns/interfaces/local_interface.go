@@ -69,7 +69,7 @@ func StartLocalInterfaceServer(cfg LocalConfig, onNewClient func(*Interface)) (n
 		_ = os.MkdirAll(filepath.Dir(addr), 0o755)
 		ln, err = net.Listen("unix", addr)
 	} else {
-		ln, err = net.Listen("tcp", addr)
+		ln, err = listenWithReuseAddr("tcp", addr)
 	}
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func StartLocalInterfaceServer(cfg LocalConfig, onNewClient func(*Interface)) (n
 				Name:              fmt.Sprintf("LocalInterface[%s]", ifName),
 				Type:              "LocalInterface",
 				IN:                true,
-				OUT:               true,
+				OUT:               false, // Python LocalClientInterface.OUT = False
 				DriverImplemented: true,
 				Online:            true,
 				Bitrate:           1_000_000_000,
@@ -137,6 +137,9 @@ func ConnectLocalInterfaceClient(cfg LocalConfig, ifc *Interface) error {
 	if ifc == nil {
 		return errors.New("nil interface")
 	}
+	// Python LocalClientInterface defaults to OUT=False (even though it can transmit).
+	ifc.IN = true
+	ifc.OUT = false
 	if ifc.Bitrate == 0 {
 		ifc.Bitrate = 1_000_000_000
 	}
@@ -176,6 +179,11 @@ func ConnectLocalInterfaceClient(cfg LocalConfig, ifc *Interface) error {
 		for {
 			ifc.readLocalFramesLoop()
 			ifc.setLocalConn(nil)
+			// Python only attempts reconnect for shared-instance clients.
+			if !ifc.LocalIsSharedClient || ifc.Detached {
+				ifc.Online = false
+				return
+			}
 			if DiagLogf != nil {
 				DiagLogf(LogWarning, "Socket for %s was closed, attempting to reconnect...", ifc)
 			}

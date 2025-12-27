@@ -31,3 +31,14 @@ func TestWeaveDevice_TaskStats(t *testing.T) {
 	}
 }
 
+func TestWeaveInterface_IngressControl_ForcedOff(t *testing.T) {
+	t.Parallel()
+
+	ifc, err := NewWeaveInterface("w", map[string]string{"port": "/dev/ttyUSB0"})
+	if err != nil {
+		t.Fatalf("NewWeaveInterface: %v", err)
+	}
+	if ifc.IngressControl {
+		t.Fatalf("expected IngressControl=false")
+	}
+}

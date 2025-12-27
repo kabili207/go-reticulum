@@ -130,14 +130,11 @@ func (p *PipeDriver) ProcessOutgoing(data []byte) {
 	if p == nil || len(data) == 0 || p.iface == nil || !p.online.Load() {
 		return
 	}
-	payload := data
-	if len(payload) > pipeHWMTU {
-		payload = payload[:pipeHWMTU]
-	}
 
-	framed := make([]byte, 0, len(payload)+2+8)
+	// Python does not truncate outgoing payload before framing; receiver-side HWMTU caps.
+	framed := make([]byte, 0, len(data)+2+8)
 	framed = append(framed, hdlcFlag)
-	framed = append(framed, hdlcEscape(payload)...)
+	framed = append(framed, hdlcEscape(data)...)
 	framed = append(framed, hdlcFlag)
 
 	p.writeMu.Lock()

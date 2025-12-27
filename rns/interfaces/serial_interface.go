@@ -52,6 +52,10 @@ func NewSerialInterface(name string, kv map[string]string) (*Interface, error) {
 		Bitrate:           cfg.Speed, // Python: self.bitrate = self.speed
 		HWMTU:             cfg.HWMTU,
 	}
+	// Match Python SerialInterface.DEFAULT_IFAC_SIZE.
+	if iface.IFACSize == 0 {
+		iface.IFACSize = 8
+	}
 
 	driver := &SerialDriver{
 		iface:  iface,

@@ -16,10 +16,28 @@ func (i *Interface) udpProcessOutgoing(data []byte) {
 	if i == nil || len(data) == 0 {
 		return
 	}
-	if i.udpConn == nil || i.udpForwardAddr == nil {
+	if i.udpForwardAddr == nil {
 		return
 	}
-	_, _ = i.udpConn.WriteToUDP(data, i.udpForwardAddr)
+
+	// Python parity: process_outgoing uses a fresh UDP socket each time and does
+	// not depend on the receive socket being active.
+	conn := i.udpConn
+	ephemeral := false
+	if conn == nil {
+		c, err := net.ListenUDP("udp", nil)
+		if err != nil {
+			return
+		}
+		enableUDPBroadcast(c)
+		conn = c
+		ephemeral = true
+	}
+
+	_, _ = conn.WriteToUDP(data, i.udpForwardAddr)
+	if ephemeral {
+		_ = conn.Close()
+	}
 	atomic.AddUint64(&i.TXB, uint64(len(data)))
 	if parent := i.Parent; parent != nil {
 		atomic.AddUint64(&parent.TXB, uint64(len(data)))
@@ -31,28 +49,37 @@ func (i *Interface) ConfigureUDP(listenIP string, listenPort int, forwardIP stri
 	if i == nil {
 		return nil
 	}
-	if listenPort <= 0 {
-		return fmt.Errorf("invalid listen port %d", listenPort)
+
+	// Python parity: allow forward-only interfaces (no bind/listen).
+	if listenPort > 0 {
+		if strings.TrimSpace(listenIP) == "" {
+			listenIP = "0.0.0.0"
+		}
+		bindAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(listenIP, fmt.Sprint(listenPort)))
+		if err != nil {
+			return err
+		}
+		i.udpBindAddr = bindAddr
+	} else {
+		i.udpBindAddr = nil
 	}
-	if strings.TrimSpace(listenIP) == "" {
-		listenIP = "0.0.0.0"
-	}
+
+	// Forward config can exist with or without a bind port.
 	if forwardPort <= 0 {
 		forwardPort = listenPort
 	}
-	if strings.TrimSpace(forwardIP) == "" {
-		forwardIP = "255.255.255.255"
+	if forwardPort > 0 {
+		if strings.TrimSpace(forwardIP) == "" {
+			forwardIP = "255.255.255.255"
+		}
+		fwdAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(forwardIP, fmt.Sprint(forwardPort)))
+		if err != nil {
+			return err
+		}
+		i.udpForwardAddr = fwdAddr
+	} else {
+		i.udpForwardAddr = nil
 	}
-	bindAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(listenIP, fmt.Sprint(listenPort)))
-	if err != nil {
-		return err
-	}
-	fwdAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(forwardIP, fmt.Sprint(forwardPort)))
-	if err != nil {
-		return err
-	}
-	i.udpBindAddr = bindAddr
-	i.udpForwardAddr = fwdAddr
 	return nil
 }
 

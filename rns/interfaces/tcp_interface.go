@@ -104,6 +104,14 @@ type TCPClientInterface struct {
 	HWMTU    int
 	Bitrate  int
 	IFACSize int
+	IFACNetnameVal string
+	IFACNetkeyVal  string
+	IFACKey        []byte
+	IFACIdentity   interface{ Sign([]byte) ([]byte, error) }
+	IFACSignature  []byte
+
+	AutoconfigureMTU bool
+	FixedMTU         bool
 
 	parent *TCPServerInterface
 
@@ -138,6 +146,7 @@ func NewTCPClientInitiator(owner TCPOwner, log TCPLog, name, host string, port i
 		HWMTU:          TCP_HW_MTU,
 		Bitrate:        TCP_BITRATE_GUESS,
 		IFACSize:       TCP_DEFAULT_IFAC_SIZE,
+		AutoconfigureMTU: true,
 	}
 	iface.neverConn.Store(true)
 	return iface
@@ -154,11 +163,43 @@ func NewTCPClientFromAccepted(owner TCPOwner, log TCPLog, name string, c net.Con
 		HWMTU:       TCP_HW_MTU,
 		Bitrate:     TCP_BITRATE_GUESS,
 		IFACSize:    TCP_DEFAULT_IFAC_SIZE,
+		AutoconfigureMTU: true,
 	}
 	iface.setConn(c)
 	iface.online.Store(true)
 	iface.neverConn.Store(false)
 	return iface
+}
+
+func (t *TCPClientInterface) OptimiseMTU() {
+	if t == nil || !t.AutoconfigureMTU || t.FixedMTU {
+		return
+	}
+	br := t.Bitrate
+	switch {
+	case br >= 1_000_000_000:
+		t.HWMTU = 524288
+	case br > 750_000_000:
+		t.HWMTU = 262144
+	case br > 400_000_000:
+		t.HWMTU = 131072
+	case br > 200_000_000:
+		t.HWMTU = 65536
+	case br > 100_000_000:
+		t.HWMTU = 32768
+	case br > 10_000_000:
+		t.HWMTU = 16384
+	case br > 5_000_000:
+		t.HWMTU = 8192
+	case br > 2_000_000:
+		t.HWMTU = 4096
+	case br > 1_000_000:
+		t.HWMTU = 2048
+	case br > 62_500:
+		t.HWMTU = 1024
+	default:
+		t.HWMTU = 0
+	}
 }
 
 func (t *TCPClientInterface) String() string {
@@ -495,7 +536,12 @@ func (t *TCPClientInterface) readLoop() {
 				frame = bytes.ReplaceAll(frame, []byte{HDLC_ESC, HDLC_ESC ^ HDLC_ESC_MASK}, []byte{HDLC_ESC})
 
 				// python: если len(frame) > HEADER_MINSIZE -> process
-				// тут оставляю >0, а проверку заголовка делай выше по стеку
+				if HeaderMinSize > 0 && len(frame) <= HeaderMinSize {
+					// Отрезаем обработанную часть буфера, иначе зациклится на том же фрейме.
+					// Python: frame_buffer = frame_buffer[frame_end:]
+					frameBuf.Next(end)
+					continue
+				}
 				if len(frame) > 0 {
 					t.ProcessIncoming(frame)
 				}
@@ -535,6 +581,19 @@ type TCPServerInterface struct {
 	KISSFraming bool
 
 	HWMTU int
+	FixedMTU bool
+	Bitrate int
+
+	PreferIPv6 bool
+	Device     string
+
+	// IFAC parity (mirrors Python TCPServerInterface spawning behaviour).
+	IFACSize       int
+	IFACNetnameVal string
+	IFACNetkeyVal  string
+	IFACKey        []byte
+	IFACIdentity   interface{ Sign([]byte) ([]byte, error) }
+	IFACSignature  []byte
 
 	ln       net.Listener
 	online   atomic.Bool
@@ -556,7 +615,96 @@ func NewTCPServer(owner TCPOwner, log TCPLog, name, listenAddr string, kiss, i2p
 		I2PTunneled: i2p,
 		KISSFraming: kiss,
 		HWMTU:       TCP_HW_MTU,
+		Bitrate:     TCP_BITRATE_GUESS,
+		IFACSize:    TCP_DEFAULT_IFAC_SIZE,
 	}
+}
+
+type TCPServerConfig struct {
+	Name string
+
+	Device     string
+	ListenIP   string
+	ListenPort int
+	Port       int
+	PreferIPv6 bool
+
+	I2PTunneled bool
+	KISSFraming bool
+
+	FixedMTU int // 0 = default TCP_HW_MTU
+
+	IFACSize   int
+	IFACNetname string
+	IFACNetkey  string
+}
+
+// TCPIFACDeriver can be set by the rns package (or callers) to derive IFAC keying
+// material for TCP interfaces, mirroring Python interface-level IFAC behaviour.
+// It returns the IFAC key (64 bytes), the signing identity, plus the interface signature bytes.
+var TCPIFACDeriver func(ifacNetname, ifacNetkey string) (ifacKey []byte, ifacIdentity interface{ Sign([]byte) ([]byte, error) }, ifacSignature []byte, err error)
+
+// NewTCPServerFromConfig mirrors Python TCPServerInterface configuration semantics:
+// - bind can be specified via kernel interface name ("device") or explicit host ("listen_ip")
+// - prefer_ipv6 controls address family selection
+// - port is an alias for listen_port
+func NewTCPServerFromConfig(owner TCPOwner, log TCPLog, cfg TCPServerConfig) (*TCPServerInterface, error) {
+	if cfg.Name == "" {
+		return nil, errors.New("tcp server config missing name")
+	}
+
+	listenPort := cfg.ListenPort
+	if listenPort == 0 {
+		listenPort = cfg.Port
+	}
+	if listenPort <= 0 || listenPort > 65535 {
+		return nil, fmt.Errorf("invalid listen port: %d", listenPort)
+	}
+
+	var listenAddr string
+	if cfg.Device != "" {
+		addr, err := tcpAddressForInterface(cfg.Device, listenPort, cfg.PreferIPv6)
+		if err != nil {
+			return nil, err
+		}
+		listenAddr = addr
+	} else {
+		if cfg.ListenIP == "" {
+			return nil, errors.New("tcp server config missing listen_ip/device")
+		}
+		addr, err := tcpAddressForHost(cfg.ListenIP, listenPort, cfg.PreferIPv6)
+		if err != nil {
+			return nil, err
+		}
+		listenAddr = addr
+	}
+
+	s := NewTCPServer(owner, log, cfg.Name, listenAddr, cfg.KISSFraming, cfg.I2PTunneled)
+	s.Device = cfg.Device
+	s.PreferIPv6 = cfg.PreferIPv6
+
+	if cfg.FixedMTU > 0 {
+		s.HWMTU = cfg.FixedMTU
+		s.FixedMTU = true
+	}
+
+	if cfg.IFACSize > 0 {
+		s.IFACSize = cfg.IFACSize
+	}
+	s.IFACNetnameVal = cfg.IFACNetname
+	s.IFACNetkeyVal = cfg.IFACNetkey
+
+	if (s.IFACNetnameVal != "" || s.IFACNetkeyVal != "") && TCPIFACDeriver != nil {
+		key, id, sig, err := TCPIFACDeriver(s.IFACNetnameVal, s.IFACNetkeyVal)
+		if err != nil {
+			return nil, err
+		}
+		s.IFACKey = key
+		s.IFACIdentity = id
+		s.IFACSignature = sig
+	}
+
+	return s, nil
 }
 
 func (s *TCPServerInterface) String() string {
@@ -570,7 +718,8 @@ func (s *TCPServerInterface) Clients() int {
 }
 
 func (s *TCPServerInterface) Start() error {
-	ln, err := net.Listen("tcp", s.ListenAddr)
+	// Python parity: allow_reuse_address = True
+	ln, err := listenWithReuseAddr("tcp", s.ListenAddr)
 	if err != nil {
 		return err
 	}
@@ -620,11 +769,7 @@ func (s *TCPServerInterface) acceptLoop() {
 		}
 
 		ra := c.RemoteAddr().(*net.TCPAddr)
-		iface := NewTCPClientFromAccepted(s.Owner, s.Log, "Client on "+s.Name, c, s.KISSFraming, s.I2PTunneled)
-		iface.parent = s
-		iface.TargetHost = ra.IP.String()
-		iface.TargetPort = ra.Port
-		iface.HWMTU = s.HWMTU
+		iface := s.spawnClient(c, ra)
 
 		s.mu.Lock()
 		s.clients = append(s.clients, iface)
@@ -632,6 +777,28 @@ func (s *TCPServerInterface) acceptLoop() {
 
 		go iface.readLoop()
 	}
+}
+
+func (s *TCPServerInterface) spawnClient(c net.Conn, ra *net.TCPAddr) *TCPClientInterface {
+	iface := NewTCPClientFromAccepted(s.Owner, s.Log, "Client on "+s.Name, c, s.KISSFraming, s.I2PTunneled)
+	iface.parent = s
+	if ra != nil {
+		iface.TargetHost = ra.IP.String()
+		iface.TargetPort = ra.Port
+	}
+	iface.HWMTU = s.HWMTU
+	iface.FixedMTU = s.FixedMTU
+	iface.AutoconfigureMTU = !s.FixedMTU
+	iface.Bitrate = s.Bitrate
+	iface.OptimiseMTU()
+
+	iface.IFACSize = s.IFACSize
+	iface.IFACNetnameVal = s.IFACNetnameVal
+	iface.IFACNetkeyVal = s.IFACNetkeyVal
+	iface.IFACKey = append([]byte(nil), s.IFACKey...)
+	iface.IFACIdentity = s.IFACIdentity
+	iface.IFACSignature = append([]byte(nil), s.IFACSignature...)
+	return iface
 }
 
 func (s *TCPServerInterface) removeClient(ci *TCPClientInterface) {

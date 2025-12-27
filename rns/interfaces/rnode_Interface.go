@@ -406,7 +406,8 @@ type RNodeInterface struct {
 	detected   atomic.Bool
 	fwMaj      atomic.Uint32
 	fwMin      atomic.Uint32
-	radioState atomic.Uint32
+	radioState        atomic.Uint32 // reported state (CMD_RADIO_STATE)
+	desiredRadioState atomic.Uint32 // configured/desired state
 
 	// reported params
 	rFreq uint32
@@ -414,12 +415,20 @@ type RNodeInterface struct {
 	rTXP  byte
 	rSF   byte
 	rCR   byte
+	repFreq  atomic.Bool
+	repBW    atomic.Bool
+	repTXP   atomic.Bool
+	repSF    atomic.Bool
+	repCR    atomic.Bool
+	repState atomic.Bool
 
 	// stats (часть)
 	rssi    int32
 	snr     float32
 	qSNR    float32
 	bitrate float64
+	repStatRSSI atomic.Bool
+	repStatSNR  atomic.Bool
 
 	rStatRX uint32
 	rStatTX uint32
@@ -579,6 +588,15 @@ func (r *RNodeInterface) ResetRadioState() {
 	r.rSF = 0
 	r.rCR = 0
 	r.radioState.Store(0)
+	r.desiredRadioState.Store(0)
+	r.repFreq.Store(false)
+	r.repBW.Store(false)
+	r.repTXP.Store(false)
+	r.repSF.Store(false)
+	r.repCR.Store(false)
+	r.repState.Store(false)
+	r.repStatRSSI.Store(false)
+	r.repStatSNR.Store(false)
 	r.detected.Store(false)
 	r.platform = 0
 	r.mcu = 0
@@ -881,7 +899,7 @@ func (r *RNodeInterface) SetTXPower(tx byte) error { return r.sendCmd(CMD_TXPOWE
 func (r *RNodeInterface) SetSF(sf byte) error      { return r.sendCmd(CMD_SF, []byte{sf}) }
 func (r *RNodeInterface) SetCR(cr byte) error      { return r.sendCmd(CMD_CR, []byte{cr}) }
 func (r *RNodeInterface) SetRadioState(state byte) error {
-	r.radioState.Store(uint32(state))
+	r.desiredRadioState.Store(uint32(state))
 	return r.sendCmd(CMD_RADIO_STATE, []byte{state})
 }
 
@@ -1058,6 +1076,8 @@ func (r *RNodeInterface) onData(p []byte) {
 	// как в питоне: обнуляет RSSI/SNR “после приёма”
 	r.rssi = 0
 	r.snr = 0
+	r.repStatRSSI.Store(false)
+	r.repStatSNR.Store(false)
 }
 
 func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
@@ -1066,35 +1086,41 @@ func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
 	case CMD_FREQUENCY:
 		if buf.Len() == 4 {
 			r.rFreq = binary.BigEndian.Uint32(buf.Bytes())
+			r.repFreq.Store(true)
 			buf.Reset()
 			r.updateBitrate()
 		}
 	case CMD_BANDWIDTH:
 		if buf.Len() == 4 {
 			r.rBW = binary.BigEndian.Uint32(buf.Bytes())
+			r.repBW.Store(true)
 			buf.Reset()
 			r.updateBitrate()
 		}
 	case CMD_TXPOWER:
 		if buf.Len() == 1 {
 			r.rTXP = buf.Bytes()[0]
+			r.repTXP.Store(true)
 			buf.Reset()
 		}
 	case CMD_SF:
 		if buf.Len() == 1 {
 			r.rSF = buf.Bytes()[0]
+			r.repSF.Store(true)
 			buf.Reset()
 			r.updateBitrate()
 		}
 	case CMD_CR:
 		if buf.Len() == 1 {
 			r.rCR = buf.Bytes()[0]
+			r.repCR.Store(true)
 			buf.Reset()
 			r.updateBitrate()
 		}
 	case CMD_RADIO_STATE:
 		if buf.Len() == 1 {
 			r.radioState.Store(uint32(buf.Bytes()[0]))
+			r.repState.Store(true)
 			buf.Reset()
 		}
 	case CMD_FW_VERSION:
@@ -1117,12 +1143,14 @@ func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
 		if buf.Len() == 1 {
 			// python: byte - RSSI_OFFSET(157)
 			r.rssi = int32(int(buf.Bytes()[0]) - 157)
+			r.repStatRSSI.Store(true)
 			buf.Reset()
 		}
 	case CMD_STAT_SNR:
 		if buf.Len() == 1 {
 			sb := int8(buf.Bytes()[0])
 			r.snr = float32(sb) * 0.25
+			r.repStatSNR.Store(true)
 			// Compute quality metric like Python.
 			sfs := float32(r.rSF) - 7
 			qMin := float32(QSNRMinBase) - sfs*float32(QSNRStep)
@@ -1379,34 +1407,62 @@ func (r *RNodeInterface) validateRadioState() bool {
 	}
 
 	valid := true
-	if r.rFreq != 0 && math.Abs(float64(r.Frequency)-float64(r.rFreq)) > 100 {
+	if r.Frequency != 0 && !r.repFreq.Load() {
+		valid = false
+		if r.Log != nil {
+			r.Log.Errorf("%s frequency report missing", r.String())
+		}
+	} else if r.repFreq.Load() && r.Frequency != 0 && math.Abs(float64(r.Frequency)-float64(r.rFreq)) > 100 {
 		valid = false
 		if r.Log != nil {
 			r.Log.Errorf("%s frequency mismatch %d vs %d", r.String(), r.Frequency, r.rFreq)
 		}
 	}
-	if r.Bandwidth != 0 && r.rBW != 0 && r.Bandwidth != r.rBW {
+	if r.Bandwidth != 0 && !r.repBW.Load() {
+		valid = false
+		if r.Log != nil {
+			r.Log.Errorf("%s bandwidth report missing", r.String())
+		}
+	} else if r.Bandwidth != 0 && r.repBW.Load() && r.Bandwidth != r.rBW {
 		valid = false
 		if r.Log != nil {
 			r.Log.Errorf("%s bandwidth mismatch %d vs %d", r.String(), r.Bandwidth, r.rBW)
 		}
 	}
-	if r.TXPower != 0 && r.rTXP != 0 && r.TXPower != r.rTXP {
+	if !r.repTXP.Load() {
+		// Python treats missing r_txpower as mismatch (None).
+		valid = false
+		if r.Log != nil {
+			r.Log.Errorf("%s txpower report missing", r.String())
+		}
+	} else if r.TXPower != r.rTXP {
 		valid = false
 		if r.Log != nil {
 			r.Log.Errorf("%s txpower mismatch %d vs %d", r.String(), r.TXPower, r.rTXP)
 		}
 	}
-	if r.SF != 0 && r.rSF != 0 && r.SF != r.rSF {
+	if r.SF != 0 && !r.repSF.Load() {
+		valid = false
+		if r.Log != nil {
+			r.Log.Errorf("%s sf report missing", r.String())
+		}
+	} else if r.SF != 0 && r.repSF.Load() && r.SF != r.rSF {
 		valid = false
 		if r.Log != nil {
 			r.Log.Errorf("%s sf mismatch %d vs %d", r.String(), r.SF, r.rSF)
 		}
 	}
-	if r.radioState.Load() != 0 && r.radioState.Load() != RADIO_STATE_ON {
-		valid = false
-		if r.Log != nil {
-			r.Log.Errorf("%s radio state mismatch", r.String())
+	if want := r.desiredRadioState.Load(); want != 0 {
+		if !r.repState.Load() {
+			valid = false
+			if r.Log != nil {
+				r.Log.Errorf("%s radio state report missing", r.String())
+			}
+		} else if got := r.radioState.Load(); got != want {
+			valid = false
+			if r.Log != nil {
+				r.Log.Errorf("%s radio state mismatch %d vs %d", r.String(), want, got)
+			}
 		}
 	}
 	return valid

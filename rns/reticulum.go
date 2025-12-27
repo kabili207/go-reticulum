@@ -83,6 +83,31 @@ func init() {
 	gob.Register([]map[string]any{})
 	gob.Register([]any{})
 	gob.Register([]byte{})
+
+	// Mirror Python's defaulting of Interface.announce_cap to Reticulum.ANNOUNCE_CAP.
+	ifaces.DefaultAnnounceCapProvider = func() float64 { return float64(ANNOUNCE_CAP) / 100.0 }
+
+	// Mirror Python's IFAC derivation for TCPServerInterface spawning, without import cycles.
+	ifaces.TCPIFACDeriver = func(ifacNetname, ifacNetkey string) ([]byte, interface{ Sign([]byte) ([]byte, error) }, []byte, error) {
+		origin := make([]byte, 0)
+		if strings.TrimSpace(ifacNetname) != "" {
+			origin = append(origin, FullHash([]byte(ifacNetname))...)
+		}
+		if strings.TrimSpace(ifacNetkey) != "" {
+			origin = append(origin, FullHash([]byte(ifacNetkey))...)
+		}
+		if len(origin) == 0 {
+			return nil, nil, nil, nil
+		}
+		originHash := FullHash(origin)
+		ifacKey, err := cryptography.HKDF(64, originHash, IFAC_SALT, nil)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ifacIdentity, _ := IdentityFromBytes(ifacKey)
+		ifacSignature, _ := ifacIdentity.Sign(FullHash(ifacKey))
+		return ifacKey, ifacIdentity, ifacSignature, nil
+	}
 }
 
 type Reticulum struct {
@@ -1186,6 +1211,8 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 				bringupErrors = append(bringupErrors, msg)
 			} else {
 				inheritInterfaceConfig(wIf, ifc)
+				// Python parity: WeaveInterface.should_ingress_limit() всегда false.
+				wIf.IngressControl = false
 				ifc = wIf
 			}
 		}

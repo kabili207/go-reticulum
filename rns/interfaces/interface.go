@@ -53,6 +53,11 @@ var WeaveIdentityProvider func(port string) (sigPub []byte, sign func(msg []byte
 // QueuedAnnounceLife mirrors Reticulum.QUEUED_ANNOUNCE_LIFE.
 var QueuedAnnounceLife = 24 * time.Hour
 
+// DefaultAnnounceCapProvider is set by the rns package and mirrors
+// Reticulum.ANNOUNCE_CAP defaulting in Python.
+// When non-nil and returning >0, it is used when Interface.AnnounceCap is unset (<=0).
+var DefaultAnnounceCapProvider func() float64
+
 // ---------- logging hooks ----------
 //
 // DiagLog and DiagLogf are set by the rns package so interface drivers can emit
@@ -733,7 +738,12 @@ func (i *Interface) ProcessAnnounceRaw(raw []byte, hops int) {
 	}
 	now := time.Now()
 
-	if i.AnnounceCap <= 0 {
+	cap := i.AnnounceCap
+	if cap <= 0 && DefaultAnnounceCapProvider != nil {
+		cap = DefaultAnnounceCapProvider()
+	}
+
+	if cap <= 0 {
 		i.ProcessOutgoing(raw)
 		i.SentAnnounce()
 		return
@@ -757,6 +767,19 @@ func (i *Interface) ProcessAnnounceRaw(raw []byte, hops int) {
 }
 
 func (i *Interface) processAnnounceQueueLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			i.icMu.Lock()
+			i.announceQueue = nil
+			i.announceRunning = false
+			i.icMu.Unlock()
+			if DiagLogf != nil {
+				DiagLogf(LogError, "Error while processing announce queue on %s. The contained exception was: %v", i, r)
+				DiagLogf(LogError, "The announce queue for this interface has been cleared.")
+			}
+		}
+	}()
+
 	for {
 		var (
 			entry   announceQueueEntry
@@ -815,13 +838,23 @@ func (i *Interface) processAnnounceQueueLoop() {
 			continue
 		}
 
+		cap := i.AnnounceCap
+		if cap <= 0 && DefaultAnnounceCapProvider != nil {
+			cap = DefaultAnnounceCapProvider()
+		}
+		if cap <= 0 {
+			i.ProcessOutgoing(entry.raw)
+			i.SentAnnounce()
+			continue
+		}
+
 		br := i.Bitrate
 		if br <= 0 {
 			br = 62500
 		}
 		// tx_time = (len(raw)*8) / bitrate; wait_time = tx_time / announce_cap
 		txTime := (float64(len(entry.raw)) * 8.0) / float64(br)
-		waitTime := txTime / i.AnnounceCap
+		waitTime := txTime / cap
 		if waitTime < 0 {
 			waitTime = 0
 		}
@@ -902,6 +935,16 @@ func (i *Interface) incomingAnnounceFrequencyLocked(now time.Time) float64 {
 		return 0
 	}
 	return 1.0 / (delta / float64(len(i.iaFreq)))
+}
+
+func (i *Interface) IncomingAnnounceFrequency() float64 {
+	if i == nil {
+		return 0
+	}
+	now := time.Now()
+	i.icMu.Lock()
+	defer i.icMu.Unlock()
+	return i.incomingAnnounceFrequencyLocked(now)
 }
 
 func (i *Interface) shouldIngressLimitLocked(now time.Time) bool {

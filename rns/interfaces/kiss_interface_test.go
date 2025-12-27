@@ -28,7 +28,6 @@ func TestKISS_parseKISSConfig_DefaultsAndCaseInsensitiveKeys(t *testing.T) {
 	cfg, err := parseKISSConfig("k", map[string]string{
 		"PORT":         "/dev/ttyUSB0",
 		"SpEeD":        "115200",
-		"read_timeout": "0",
 		"parity":       "even",
 		"stopbits":     "2",
 		"id_interval":  "5",
@@ -43,8 +42,11 @@ func TestKISS_parseKISSConfig_DefaultsAndCaseInsensitiveKeys(t *testing.T) {
 	if cfg.Speed != 115200 {
 		t.Fatalf("unexpected speed %d", cfg.Speed)
 	}
-	if cfg.ReadTimeout != 100*time.Millisecond {
-		t.Fatalf("expected read timeout default, got %v", cfg.ReadTimeout)
+	if cfg.ReadTimeout != 0 {
+		t.Fatalf("expected read timeout default 0, got %v", cfg.ReadTimeout)
+	}
+	if cfg.FrameTimeout != 100*time.Millisecond {
+		t.Fatalf("expected frame timeout default 100ms, got %v", cfg.FrameTimeout)
 	}
 	if cfg.BeaconEvery != 5*time.Second {
 		t.Fatalf("expected beacon every 5s, got %v", cfg.BeaconEvery)
@@ -61,4 +63,3 @@ func TestKISS_parseKISSConfig_MissingPort(t *testing.T) {
 		t.Fatalf("expected error when port is missing")
 	}
 }
-

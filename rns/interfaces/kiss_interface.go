@@ -22,7 +22,8 @@ type kissConfig struct {
 	Parity       serial.Parity
 	HWMTU        int
 	BitrateGuess int
-	ReadTimeout  time.Duration
+	ReadTimeout  time.Duration // serial read timeout; Python uses 0 (polling)
+	FrameTimeout time.Duration // frame assembly timeout; Python uses 100ms
 	Preamble     int
 	TxTail       int
 	Persistence  int
@@ -110,7 +111,9 @@ func parseKISSConfig(name string, kv map[string]string) (kissConfig, error) {
 		Parity:       serial.ParityNone,
 		HWMTU:        564,
 		BitrateGuess: 1200,
-		ReadTimeout:  time.Duration(parseIntOr(get("read_timeout"), 100)) * time.Millisecond,
+		// Python: Serial(timeout=0) and an independent in-frame timeout (self.timeout=100ms).
+		ReadTimeout:  time.Duration(parseIntOr(get("read_timeout"), 0)) * time.Millisecond,
+		FrameTimeout: time.Duration(parseIntOr(get("timeout"), 100)) * time.Millisecond,
 		Preamble:     parseIntOr(get("preamble"), 350),
 		TxTail:       parseIntOr(get("txtail"), 20),
 		Persistence:  parseIntOr(get("persistence"), 64),
@@ -139,7 +142,10 @@ func parseKISSConfig(name string, kv map[string]string) (kissConfig, error) {
 	}
 
 	if cfg.ReadTimeout <= 0 {
-		cfg.ReadTimeout = 100 * time.Millisecond
+		cfg.ReadTimeout = 0
+	}
+	if cfg.FrameTimeout <= 0 {
+		cfg.FrameTimeout = 100 * time.Millisecond
 	}
 
 	if iv := parseIntOr(get("id_interval"), 0); iv > 0 {
@@ -342,6 +348,11 @@ func (d *KISSDriver) sendFrameLocked(payload []byte, startBeaconTimer bool) {
 			DiagLogf(LogError, "The interface %s experienced an unrecoverable error and is now offline.", d.String())
 			DiagLogf(LogError, "Reticulum will attempt to reconnect the interface periodically.")
 		}
+		if PanicOnInterfaceErrorProvider != nil && PanicOnInterfaceErrorProvider() {
+			if PanicFunc != nil {
+				PanicFunc()
+			}
+		}
 		d.closeSerial()
 		d.startReconnect()
 		return
@@ -377,17 +388,16 @@ func (d *KISSDriver) readLoop() {
 		inFrame    bool
 		escape     bool
 		command    byte = kissCmdUnknown
+		readyFired bool
 		dataBuffer      = make([]byte, 0, d.cfg.HWMTU)
 		lastRead        = time.Now()
 	)
-	frameTimeout := d.cfg.ReadTimeout
+	frameTimeout := d.cfg.FrameTimeout
 	if frameTimeout <= 0 {
 		frameTimeout = 100 * time.Millisecond
 	}
-	idleSleep := frameTimeout / 2
-	if idleSleep <= 0 {
-		idleSleep = 50 * time.Millisecond
-	}
+	// Python sleeps 50ms between polls when there's no data.
+	idleSleep := 50 * time.Millisecond
 
 	for {
 		select {
@@ -407,6 +417,11 @@ func (d *KISSDriver) readLoop() {
 				DiagLogf(LogError, "A serial port error occurred, the contained exception was: %v", err)
 				DiagLogf(LogError, "The interface %s experienced an unrecoverable error and is now offline.", d.String())
 				DiagLogf(LogError, "Reticulum will attempt to reconnect the interface periodically.")
+			}
+			if PanicOnInterfaceErrorProvider != nil && PanicOnInterfaceErrorProvider() {
+				if PanicFunc != nil {
+					PanicFunc()
+				}
 			}
 			d.closeSerial()
 			return
@@ -458,10 +473,16 @@ func (d *KISSDriver) readLoop() {
 			}
 			dataBuffer = dataBuffer[:0]
 		case b == kissFEND:
+			// Tolerate READY frames without payload bytes (eg. FEND CMD_READY FEND).
+			if inFrame && command == kissCmdReady && !readyFired {
+				readyFired = true
+				d.processQueue()
+			}
 			inFrame = true
 			command = kissCmdUnknown
 			dataBuffer = dataBuffer[:0]
 			escape = false
+			readyFired = false
 		case inFrame && len(dataBuffer) < d.cfg.HWMTU:
 			if len(dataBuffer) == 0 && command == kissCmdUnknown {
 				// Strip port nibble; we only support one HDLC port for now.
@@ -481,6 +502,7 @@ func (d *KISSDriver) readLoop() {
 					dataBuffer = append(dataBuffer, b)
 				}
 			} else if command == kissCmdReady {
+				readyFired = true
 				d.processQueue()
 			}
 		}

@@ -163,6 +163,7 @@ type RNodeMultiDriver struct {
 	display     atomic.Bool
 	randomByte  atomic.Uint32
 	selectedIdx atomic.Int32
+	firstTxAt   atomic.Int64 // unixnano; like Python first_tx
 
 	interfaceTypesMu sync.Mutex
 	interfaceTypes   []string
@@ -682,10 +683,16 @@ func (d *RNodeMultiDriver) setAirtime(cmd byte, percent float64, idx byte) error
 }
 
 func (d *RNodeMultiDriver) sendData(idx byte, payload []byte) error {
-	data := kissEscape(payload)
-	frame := append([]byte{FEND, cmdSelInt, idx, FEND, FEND, CMD_DATA}, data...)
-	frame = append(frame, FEND)
+	frame, _ := makeSelDataFrame(idx, payload)
 	return d.writeBytes(frame)
+}
+
+func makeSelDataFrame(idx byte, payload []byte) (frame []byte, escapedLen int) {
+	// Python escapes the payload and accounts txb using the escaped length.
+	escaped := kissEscape(payload)
+	frame = append([]byte{FEND, cmdSelInt, idx, FEND, FEND, CMD_DATA}, escaped...)
+	frame = append(frame, FEND)
+	return frame, len(escaped)
 }
 
 func (d *RNodeMultiDriver) addSub(idx byte, ifc *Interface) {
@@ -818,8 +825,15 @@ func (d *RNodeMultiDriver) ProcessOutgoing(sub *Interface, data []byte) {
 		drv.ready.Store(false)
 	}
 
-	// Python: first_tx handling for beacon. We keep it simple: no special-case.
-	if err := d.sendData(drv.index, data); err != nil {
+	// Python: first_tx is set on first non-beacon TX, and cleared when sending the beacon payload.
+	if len(d.cfg.IDCallsign) > 0 && bytes.Equal(data, d.cfg.IDCallsign) {
+		d.firstTxAt.Store(0)
+	} else if d.firstTxAt.Load() == 0 {
+		d.firstTxAt.Store(time.Now().UnixNano())
+	}
+
+	frame, escapedLen := makeSelDataFrame(drv.index, data)
+	if err := d.writeBytes(frame); err != nil {
 		if DiagLogf != nil {
 			DiagLogf(LogError, "Serial error while transmitting via %s: %v", sub, err)
 		}
@@ -830,14 +844,29 @@ func (d *RNodeMultiDriver) ProcessOutgoing(sub *Interface, data []byte) {
 	}
 
 	atomic.AddUint64(&sub.TXB, uint64(len(data)))
-	atomic.AddUint64(&d.parent.TXB, uint64(len(data)))
+	// Python parent txb uses the escaped payload length (not raw payload bytes).
+	atomic.AddUint64(&d.parent.TXB, uint64(escapedLen))
 	if parent := d.parent.Parent; parent != nil {
-		atomic.AddUint64(&parent.TXB, uint64(len(data)))
+		atomic.AddUint64(&parent.TXB, uint64(escapedLen))
 	}
 }
 
+func (d *RNodeMultiDriver) shouldSendBeacon(now time.Time) bool {
+	if d == nil {
+		return false
+	}
+	if len(d.cfg.IDCallsign) == 0 || d.cfg.IDInterval <= 0 {
+		return false
+	}
+	first := d.firstTxAt.Load()
+	if first == 0 {
+		return false
+	}
+	return now.After(time.Unix(0, first).Add(d.cfg.IDInterval))
+}
+
 func (d *RNodeMultiDriver) idBeaconLoop() {
-	t := time.NewTicker(d.cfg.IDInterval)
+	t := time.NewTicker(80 * time.Millisecond) // Python checks beacon condition in read loop idle path
 	defer t.Stop()
 	for {
 		select {
@@ -847,7 +876,11 @@ func (d *RNodeMultiDriver) idBeaconLoop() {
 			if !d.parent.Online {
 				continue
 			}
-			// Send on all online subinterfaces.
+			if !d.shouldSendBeacon(time.Now()) {
+				continue
+			}
+
+			// Send on all online subinterfaces (and reset firstTx via ProcessOutgoing beacon handling).
 			d.subMu.Lock()
 			subs := make([]*Interface, 0, len(d.subs))
 			for _, ifc := range d.subs {
@@ -977,6 +1010,7 @@ func (d *RNodeMultiDriver) readLoop() {
 				v := binary.BigEndian.Uint32(cmdBuf.Bytes())
 				if ifc := d.getSub(byte(d.selectedIdx.Load())); ifc != nil && ifc.rnodeSub != nil {
 					ifc.rnodeSub.rFrequency.Store(v)
+					ifc.rnodeSub.repFreq.Store(true)
 					ifc.rnodeSub.updateBitrateFromReported()
 				}
 				cmdBuf.Reset()
@@ -988,6 +1022,7 @@ func (d *RNodeMultiDriver) readLoop() {
 				v := binary.BigEndian.Uint32(cmdBuf.Bytes())
 				if ifc := d.getSub(byte(d.selectedIdx.Load())); ifc != nil && ifc.rnodeSub != nil {
 					ifc.rnodeSub.rBandwidth.Store(v)
+					ifc.rnodeSub.repBW.Store(true)
 					ifc.rnodeSub.updateBitrateFromReported()
 				}
 				cmdBuf.Reset()
@@ -996,11 +1031,13 @@ func (d *RNodeMultiDriver) readLoop() {
 		case CMD_TXPOWER:
 			if ifc := d.getSub(byte(d.selectedIdx.Load())); ifc != nil && ifc.rnodeSub != nil {
 				ifc.rnodeSub.rTXPower.Store(int32(int8(b)))
+				ifc.rnodeSub.repTXP.Store(true)
 			}
 
 		case CMD_SF:
 			if ifc := d.getSub(byte(d.selectedIdx.Load())); ifc != nil && ifc.rnodeSub != nil {
 				ifc.rnodeSub.rSF.Store(uint32(b))
+				ifc.rnodeSub.repSF.Store(true)
 				ifc.rnodeSub.updateBitrateFromReported()
 			}
 
@@ -1013,6 +1050,7 @@ func (d *RNodeMultiDriver) readLoop() {
 		case CMD_RADIO_STATE:
 			if ifc := d.getSub(byte(d.selectedIdx.Load())); ifc != nil && ifc.rnodeSub != nil {
 				ifc.rnodeSub.rState.Store(uint32(b))
+				ifc.rnodeSub.repState.Store(true)
 			}
 
 		case CMD_RADIO_LOCK:
@@ -1249,6 +1287,13 @@ type RNodeSubDriver struct {
 	rCR        atomic.Uint32
 	rState     atomic.Uint32
 	rLock      atomic.Uint32
+	repFreq    atomic.Bool
+	repBW      atomic.Bool
+	repTXP     atomic.Bool
+	repSF      atomic.Bool
+	repState   atomic.Bool
+
+	desiredState atomic.Uint32
 
 	rRSSI    atomic.Int32
 	rSNR     atomic.Uint32
@@ -1285,6 +1330,12 @@ func (d *RNodeSubDriver) configure() error {
 	d.rCR.Store(0)
 	d.rState.Store(0)
 	d.rLock.Store(0)
+	d.repFreq.Store(false)
+	d.repBW.Store(false)
+	d.repTXP.Store(false)
+	d.repSF.Store(false)
+	d.repState.Store(false)
+	d.desiredState.Store(0)
 
 	// Python: sleep(2.0) before initRadio.
 	time.Sleep(2 * time.Second)
@@ -1314,6 +1365,7 @@ func (d *RNodeSubDriver) configure() error {
 			return err
 		}
 	}
+	d.desiredState.Store(uint32(RADIO_STATE_ON))
 	if err := d.parent.setU8(CMD_RADIO_STATE, RADIO_STATE_ON, d.index); err != nil {
 		return err
 	}
@@ -1321,39 +1373,61 @@ func (d *RNodeSubDriver) configure() error {
 	// Validate radio state (best-effort like Python).
 	time.Sleep(250 * time.Millisecond)
 
-	valid := true
-	if rf := d.rFrequency.Load(); rf != 0 {
+	if err := d.validateReported(); err != nil {
+		if DiagLogf != nil {
+			DiagLogf(LogError, "After configuring %s, reported radio parameters did not match configuration: %v", d.iface, err)
+		}
+		d.iface.Online = false
+		return err
+	}
+
+	d.ready.Store(true)
+	d.iface.Online = true
+	return nil
+}
+
+func (d *RNodeSubDriver) validateReported() error {
+	// Python treats missing reported values (None) as mismatches.
+	// We do the same via rep* flags.
+	if d.frequency != 0 && !d.repFreq.Load() {
+		return errors.New("frequency report missing")
+	}
+	if d.bandwidth != 0 && !d.repBW.Load() {
+		return errors.New("bandwidth report missing")
+	}
+	if !d.repTXP.Load() {
+		return errors.New("txpower report missing")
+	}
+	if d.sf != 0 && !d.repSF.Load() {
+		return errors.New("spreading factor report missing")
+	}
+	if want := d.desiredState.Load(); want != 0 && !d.repState.Load() {
+		return errors.New("radio state report missing")
+	}
+
+	if rf := d.rFrequency.Load(); d.repFreq.Load() && d.frequency != 0 {
 		diff := int64(rf) - int64(d.frequency)
 		if diff < 0 {
 			diff = -diff
 		}
 		if diff > 100 {
-			valid = false
+			return fmt.Errorf("frequency mismatch %d vs %d", d.frequency, rf)
 		}
 	}
-	if rbw := d.rBandwidth.Load(); rbw != 0 && rbw != d.bandwidth {
-		valid = false
+	if rbw := d.rBandwidth.Load(); d.repBW.Load() && d.bandwidth != 0 && rbw != d.bandwidth {
+		return fmt.Errorf("bandwidth mismatch %d vs %d", d.bandwidth, rbw)
 	}
-	if rsf := d.rSF.Load(); rsf != 0 && byte(rsf) != d.sf {
-		valid = false
+	if rtx := d.rTXPower.Load(); d.repTXP.Load() && rtx != int32(d.txpower) {
+		return fmt.Errorf("txpower mismatch %d vs %d", d.txpower, rtx)
 	}
-	if rcr := d.rCR.Load(); rcr != 0 && byte(rcr) != d.cr {
-		valid = false
+	if rsf := d.rSF.Load(); d.repSF.Load() && d.sf != 0 && byte(rsf) != d.sf {
+		return fmt.Errorf("sf mismatch %d vs %d", d.sf, byte(rsf))
 	}
-	if rst := d.rState.Load(); rst != 0 && byte(rst) != RADIO_STATE_ON {
-		valid = false
-	}
-
-	if !valid {
-		if DiagLogf != nil {
-			DiagLogf(LogError, "After configuring %s, reported radio parameters did not match configuration", d.iface)
+	if want := d.desiredState.Load(); want != 0 && d.repState.Load() {
+		if got := d.rState.Load(); got != want {
+			return fmt.Errorf("radio state mismatch %d vs %d", want, got)
 		}
-		d.iface.Online = false
-		return errors.New("radio config validation failed")
 	}
-
-	d.ready.Store(true)
-	d.iface.Online = true
 	return nil
 }
 

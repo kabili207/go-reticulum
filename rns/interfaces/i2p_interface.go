@@ -29,6 +29,7 @@ const (
 	i2pProbes              = 5
 	i2pReadTimeout         = (i2pProbeInterval*i2pProbes + i2pKeepaliveAfter) * 2
 	i2pServerRetryInterval = 15 * time.Second
+	i2pTunnelSetupTimeout  = 90 * time.Second
 )
 
 const (
@@ -136,15 +137,36 @@ func i2pLogSAMError(prefix string, err error) {
 			DiagLogf(LogError, "%s The I2P daemon can't reach peer", prefix)
 		case i2plib.SAMErrDuplicatedDest:
 			DiagLogf(LogError, "%s The I2P daemon reported that the destination is already in use", prefix)
+		case i2plib.SAMErrDuplicatedID:
+			DiagLogf(LogError, "%s The I2P daemon reported that the ID is already in use", prefix)
 		case i2plib.SAMErrInvalidID:
 			DiagLogf(LogError, "%s The I2P daemon reported that the stream session ID doesn't exist", prefix)
+		case i2plib.SAMErrInvalidKey:
+			DiagLogf(LogError, "%s The I2P daemon reported that the key is invalid", prefix)
+		case i2plib.SAMErrKeyNotFound:
+			DiagLogf(LogError, "%s The I2P daemon could not find the key", prefix)
+		case i2plib.SAMErrPeerNotFound:
+			DiagLogf(LogError, "%s The I2P daemon could not find the peer", prefix)
 		case i2plib.SAMErrI2PError:
 			DiagLogf(LogError, "%s The I2P daemon experienced an unspecified error", prefix)
 		case i2plib.SAMErrTimeout:
 			DiagLogf(LogError, "%s I2P daemon timed out", prefix)
 		default:
+			DiagLogf(LogError, "%s I2P SAM error: %v", prefix, err)
 		}
 	}
+}
+
+func contextWithStop(parent context.Context, stopCh <-chan struct{}, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 func waitTunnelStatus(desc string, setupRan func() bool, setupFailed func() bool, setupErr func() error) error {
@@ -327,6 +349,14 @@ func (d *I2PClientDriver) Close() {
 	}
 	if d.localLn != nil {
 		_ = d.localLn.Close()
+	}
+	d.mu.Lock()
+	spawned := append([]*Interface(nil), d.spawned...)
+	d.mu.Unlock()
+	for _, ifc := range spawned {
+		if ifc != nil && ifc.i2pPeer != nil {
+			ifc.i2pPeer.Close()
+		}
 	}
 	d.serverMu.Lock()
 	if d.serverTun != nil {
@@ -613,7 +643,9 @@ func (d *I2PClientDriver) ensureServerTunnel(localPort int) error {
 		DiagLogf(LogInfo, "%s Bringing up I2P endpoint, this may take a while...", d.iface)
 	}
 
-	if err := tun.Run(context.Background()); err != nil {
+	ctx, cancel := contextWithStop(context.Background(), d.stopCh, i2pTunnelSetupTimeout)
+	defer cancel()
+	if err := tun.Run(ctx); err != nil {
 		i2pLogSAMError(fmt.Sprintf("%s:", d.iface), err)
 		return err
 	}
@@ -803,7 +835,16 @@ func (p *I2PPeer) connectViaClientTunnel() error {
 	local := i2plib.Address{Host: "127.0.0.1", Port: port}
 	tun := i2plib.NewClientTunnel(local, p.remoteDest, p.samAddr, p.sam, nil, "", nil)
 
-	if err := tun.Run(context.Background()); err != nil {
+	stopCh := (<-chan struct{})(nil)
+	if p.parent != nil {
+		stopCh = p.parent.stopCh
+	}
+	if stopCh == nil {
+		stopCh = make(chan struct{})
+	}
+	ctx, cancel := contextWithStop(context.Background(), stopCh, i2pTunnelSetupTimeout)
+	defer cancel()
+	if err := tun.Run(ctx); err != nil {
 		i2pLogSAMError(fmt.Sprintf("%s:", p.iface.Name), err)
 		return err
 	}
@@ -857,6 +898,7 @@ func (p *I2PPeer) ProcessOutgoing(data []byte) {
 		frame = append([]byte{hdlcFlag}, hdlcEscape(data)...)
 		frame = append(frame, hdlcFlag)
 	}
+	framedLen := len(frame)
 	p.sendMu.Lock()
 	defer p.sendMu.Unlock()
 	c := p.getConn()
@@ -870,9 +912,9 @@ func (p *I2PPeer) ProcessOutgoing(data []byte) {
 		}
 		frame = frame[n:]
 	}
-	p.iface.TXB += uint64(len(data))
+	p.iface.TXB += uint64(framedLen)
 	if p.parentCount && p.iface.Parent != nil {
-		p.iface.Parent.TXB += uint64(len(data))
+		p.iface.Parent.TXB += uint64(framedLen)
 	}
 	p.lastWrite.Store(time.Now().UnixNano())
 }

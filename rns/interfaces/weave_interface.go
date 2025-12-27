@@ -737,6 +737,7 @@ func NewWeaveInterface(name string, kv map[string]string) (*Interface, error) {
 		Bitrate:           cfg.bitrate,
 		HWMTU:             weaveDefaultHWMTU,
 		FixedMTU:          true,
+		IngressControl:    false, // Python: should_ingress_limit() always false
 		Created:           time.Now(),
 	}
 	// Match Python default.
@@ -916,6 +917,7 @@ func (d *WeaveInterfaceDriver) addOrRefreshPeer(endpoint []byte) *Interface {
 		FixedMTU:          d.iface.FixedMTU,
 		Created:           now,
 		Online:            true,
+		IngressControl:    false, // Python: should_ingress_limit() always false
 	}
 	peer.Mode = d.iface.Mode
 	peer.IFACSize = d.iface.IFACSize
