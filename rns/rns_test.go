@@ -68,8 +68,6 @@ func TestTimestampStr_AndPreciseTimestampStr(t *testing.T) {
 }
 
 func TestSetMTU_Validation(t *testing.T) {
-	maybeParallel(t)
-
 	if err := SetMTU(0); err == nil {
 		t.Fatalf("expected error for mtu=0")
 	}
@@ -79,8 +77,6 @@ func TestSetMTU_Validation(t *testing.T) {
 }
 
 func TestSetMTU_UpdatesDerivedValues(t *testing.T) {
-	maybeParallel(t)
-
 	prevMTU := MTU
 	prevMDU := MDU
 	prevLinkMDU := LinkMDU
