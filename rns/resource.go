@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	umsgpack "main/rns/vendor"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 // зависимые вещи считаю, что у тебя уже есть:

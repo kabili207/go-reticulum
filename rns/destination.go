@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	Cryptography "main/rns/cryptography"
-	umsgpack "main/rns/vendor"
+	Cryptography "github.com/svanichkin/go-reticulum/rns/cryptography"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 // ---- вспомогательные типы ----

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	umsgpack "main/rns/vendor"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 type testPacket struct {

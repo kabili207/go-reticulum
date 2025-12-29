@@ -20,9 +20,9 @@ import (
 	"syscall"
 	"time"
 
-	"main/rns/cryptography"
-	ifaces "main/rns/interfaces"
-	vendor "main/rns/vendor"
+	"github.com/svanichkin/go-reticulum/rns/cryptography"
+	ifaces "github.com/svanichkin/go-reticulum/rns/interfaces"
+	vendor "github.com/svanichkin/go-reticulum/rns/vendor"
 
 	configobj "github.com/svanichkin/configobj"
 )

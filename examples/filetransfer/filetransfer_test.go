@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	rns "main/rns"
-	umsgpack "main/rns/vendor"
+	rns "github.com/svanichkin/go-reticulum/rns"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 func TestListFilesFiltersAndSorts(t *testing.T) {

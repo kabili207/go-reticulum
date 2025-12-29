@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	vendor "main/rns/vendor"
+	vendor "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 var localClientSeq atomic.Int64

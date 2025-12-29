@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 const appName = "example_utilities"

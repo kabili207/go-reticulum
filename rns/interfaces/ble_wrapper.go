@@ -3,7 +3,7 @@ package interfaces
 import (
 	"context"
 
-	blepkg "main/rns/interfaces/ble"
+	blepkg "github.com/svanichkin/go-reticulum/rns/interfaces/ble"
 )
 
 type bleTransportAdapter struct {

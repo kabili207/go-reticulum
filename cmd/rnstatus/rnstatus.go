@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 var rnstatusVersion = fmt.Sprintf("rnstatus %s", rns.GetVersion())

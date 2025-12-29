@@ -1,6 +1,6 @@
 package rns
 
-import ifaces "main/rns/interfaces"
+import ifaces "github.com/svanichkin/go-reticulum/rns/interfaces"
 import "time"
 
 // Interface is re-exported from the interfaces subpackage so Go ports can live next to

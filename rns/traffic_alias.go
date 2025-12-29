@@ -1,5 +1,5 @@
 package rns
 
-import ifaces "main/rns/interfaces"
+import ifaces "github.com/svanichkin/go-reticulum/rns/interfaces"
 
 type TrafficCounter = ifaces.TrafficCounter

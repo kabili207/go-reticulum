@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 func TestExpandCountFlags(t *testing.T) {
@@ -133,4 +133,3 @@ func TestLoadAllowedIdentities_FromConfigFilePrecedence(t *testing.T) {
 		t.Fatalf("got %q want %q", got, cfgHash)
 	}
 }
-

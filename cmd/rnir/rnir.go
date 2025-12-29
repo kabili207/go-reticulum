@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 const exampleConfig = `# This is an example Identity Resolver file.

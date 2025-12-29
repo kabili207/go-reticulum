@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 func TestParseDestHex_LengthAndHex(t *testing.T) {
@@ -62,4 +62,3 @@ func TestRemoteHashFromNameAndIdentity(t *testing.T) {
 		t.Fatalf("expected derived destination hash, not identity hash")
 	}
 }
-

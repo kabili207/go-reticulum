@@ -21,7 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 const (

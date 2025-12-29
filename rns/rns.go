@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	cryptography "main/rns/cryptography"
-	platformutils "main/rns/vendor"
+	cryptography "github.com/svanichkin/go-reticulum/rns/cryptography"
+	platformutils "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 // Версия библиотеки (подставь свою или генерируй при сборке).

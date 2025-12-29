@@ -32,7 +32,7 @@ import (
 
 	_ "embed"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 const programVersion = "2.5.0"

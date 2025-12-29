@@ -3,7 +3,7 @@ package rns
 import (
 	"testing"
 
-	umsgpack "main/rns/vendor"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 func TestResourceAdvertisement_RoundTrip_HashmapSegment(t *testing.T) {

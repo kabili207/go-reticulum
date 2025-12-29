@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	rns "main/rns"
-	umsgpack "main/rns/vendor"
+	rns "github.com/svanichkin/go-reticulum/rns"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 const appName = "example_utilities"

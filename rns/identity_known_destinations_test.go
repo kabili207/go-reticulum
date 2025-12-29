@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	umsgpack "main/rns/vendor"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 func pythonKnownDestinationsMsgpack(key16, packetHash, publicKey, appData []byte, seenAt float64) []byte {

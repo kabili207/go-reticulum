@@ -8,8 +8,8 @@ import (
 	"strings"
 	"syscall"
 
-	rns "main/rns"
-	ifaces "main/rns/interfaces"
+	rns "github.com/svanichkin/go-reticulum/rns"
+	ifaces "github.com/svanichkin/go-reticulum/rns/interfaces"
 )
 
 func main() {

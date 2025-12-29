@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	umsgpack "main/rns/vendor"
+	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
 func TestSaveDestinationTable_WritesFiles(t *testing.T) {

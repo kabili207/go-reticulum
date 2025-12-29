@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 
 	"github.com/traefik/yaegi/interp"
 	"github.com/traefik/yaegi/stdlib"

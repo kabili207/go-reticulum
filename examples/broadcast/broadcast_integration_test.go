@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 func requireIntegration(t *testing.T) {

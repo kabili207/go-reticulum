@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 func TestProgramSetupCreatesDestination(t *testing.T) {

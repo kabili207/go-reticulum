@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 type testAnnounceHandler struct {

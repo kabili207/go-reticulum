@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 type loopbackPacket struct{ id uint64 }

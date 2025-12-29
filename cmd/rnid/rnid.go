@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	rns "main/rns"
+	rns "github.com/svanichkin/go-reticulum/rns"
 )
 
 const (
