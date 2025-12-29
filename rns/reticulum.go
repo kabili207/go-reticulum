@@ -160,10 +160,69 @@ type Reticulum struct {
 }
 
 // Optional API parity with Python Reticulum/RNS daemon management calls.
-// These are currently no-ops in the Go port (interfaces can be detached directly).
-func (r *Reticulum) HaltInterface(_ string) error   { return nil }
-func (r *Reticulum) ResumeInterface(_ string) error { return nil }
-func (r *Reticulum) ReloadInterface(_ string) error { return nil }
+// These manage interfaces by config-section name (interface short name).
+func (r *Reticulum) HaltInterface(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("missing interface name")
+	}
+	if r.IsConnectedToSharedInstance {
+		return r.rpcCallInterfaceMgmt("halt_interface", name)
+	}
+	ifc := findInterfaceByName(name)
+	if ifc == nil {
+		return fmt.Errorf("interface %q not found", name)
+	}
+	removeInterface(ifc)
+	return nil
+}
+
+func (r *Reticulum) ResumeInterface(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("missing interface name")
+	}
+	if r.IsConnectedToSharedInstance {
+		return r.rpcCallInterfaceMgmt("resume_interface", name)
+	}
+	if findInterfaceByName(name) != nil {
+		return fmt.Errorf("interface %q already running", name)
+	}
+	kv, ok := r.getInterfaceConfigByName(name)
+	if !ok {
+		return fmt.Errorf("interface %q not found in config", name)
+	}
+	started, err := r.startInterfaceFromConfig(name, kv)
+	if err != nil {
+		return err
+	}
+	if !started {
+		return fmt.Errorf("interface %q is disabled", name)
+	}
+	return nil
+}
+
+func (r *Reticulum) ReloadInterface(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("missing interface name")
+	}
+	if r.IsConnectedToSharedInstance {
+		return r.rpcCallInterfaceMgmt("reload_interface", name)
+	}
+	if ifc := findInterfaceByName(name); ifc != nil {
+		removeInterface(ifc)
+	}
+	kv, ok := r.getInterfaceConfigByName(name)
+	if !ok {
+		return fmt.Errorf("interface %q not found in config", name)
+	}
+	started, err := r.startInterfaceFromConfig(name, kv)
+	if err != nil {
+		return err
+	}
+	if !started {
+		return fmt.Errorf("interface %q is disabled", name)
+	}
+	return nil
+}
 
 type tcpLogAdapter struct{}
 
@@ -1521,6 +1580,452 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 	return nil
 }
 
+func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) (bool, error) {
+	if r == nil {
+		return false, errors.New("nil reticulum")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, errors.New("missing interface name")
+	}
+	if kv == nil {
+		return false, errors.New("missing interface config")
+	}
+
+	enabled := parseTruthy(getFirst(kv, "interface_enabled", "enabled", "enable"), false)
+	if !enabled {
+		return false, nil
+	}
+
+	mode := parseInterfaceMode(getFirst(kv, "interface_mode", "selected_interface_mode", "mode"))
+
+	var bitrate *int
+	if v, ok := parseInt(getFirst(kv, "configured_bitrate", "bitrate")); ok && v >= MINIMUM_BITRATE {
+		bitrate = &v
+	}
+
+	var announceCap *float64
+	if v, ok := parseFloat(getFirst(kv, "announce_cap")); ok && v > 0 && v <= 100 {
+		f := v / 100.0
+		announceCap = &f
+	}
+
+	var ifacSize *int
+	if v, ok := parseInt(getFirst(kv, "ifac_size")); ok && v >= IFAC_MIN_SIZE*8 {
+		sz := v / 8
+		ifacSize = &sz
+	}
+
+	netName := getFirst(kv, "networkname", "network_name")
+	var ifacNetname *string
+	if strings.TrimSpace(netName) != "" {
+		ifacNetname = &netName
+	}
+
+	netKey := getFirst(kv, "passphrase", "pass_phrase")
+	var ifacNetkey *string
+	if strings.TrimSpace(netKey) != "" {
+		ifacNetkey = &netKey
+	}
+
+	var announceRateTarget *int
+	if v, ok := parseInt(getFirst(kv, "announce_rate_target")); ok {
+		announceRateTarget = &v
+	}
+	var announceRateGrace *int
+	if v, ok := parseInt(getFirst(kv, "announce_rate_grace")); ok {
+		announceRateGrace = &v
+	}
+	var announceRatePenalty *int
+	if v, ok := parseInt(getFirst(kv, "announce_rate_penalty")); ok {
+		announceRatePenalty = &v
+	}
+
+	ingressControl := parseTruthy(getFirst(kv, "ingress_control"), true)
+	var icMaxHeld *int
+	if v, ok := parseInt(getFirst(kv, "ic_max_held_announces")); ok {
+		icMaxHeld = &v
+	}
+	var icBurstHold *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_burst_hold")); ok {
+		icBurstHold = &v
+	}
+	var icBurstFreqNew *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_burst_freq_new")); ok {
+		icBurstFreqNew = &v
+	}
+	var icBurstFreq *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_burst_freq")); ok {
+		icBurstFreq = &v
+	}
+	var icNewTime *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_new_time")); ok {
+		icNewTime = &v
+	}
+	var icBurstPenalty *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_burst_penalty")); ok {
+		icBurstPenalty = &v
+	}
+	var icHeldRelease *float64
+	if v, ok := parseFloat(getFirst(kv, "ic_held_release_interval")); ok {
+		icHeldRelease = &v
+	}
+
+	ifType := strings.TrimSpace(getFirst(kv, "type"))
+	if ifType == "" {
+		return false, errors.New("missing interface type")
+	}
+
+	if strings.EqualFold(ifType, "BackboneInterface") || strings.EqualFold(ifType, "BackboneClientInterface") {
+		if v := strings.TrimSpace(getFirst(kv, "port")); v != "" {
+			if strings.TrimSpace(getFirst(kv, "listen_port")) == "" {
+				kv["listen_port"] = v
+			}
+			if strings.TrimSpace(getFirst(kv, "target_port")) == "" {
+				kv["target_port"] = v
+			}
+		}
+		if v := strings.TrimSpace(getFirst(kv, "remote")); v != "" && strings.TrimSpace(getFirst(kv, "target_host")) == "" {
+			kv["target_host"] = v
+		}
+		if v := strings.TrimSpace(getFirst(kv, "listen_on")); v != "" && strings.TrimSpace(getFirst(kv, "listen_ip")) == "" {
+			kv["listen_ip"] = v
+		}
+	}
+
+	if strings.EqualFold(ifType, "BackboneInterface") && strings.TrimSpace(getFirst(kv, "target_host", "remote")) != "" {
+		ifType = "BackboneClientInterface"
+	}
+
+	if strings.EqualFold(ifType, "TCPInterface") {
+		if strings.TrimSpace(getFirst(kv, "target_host", "remote")) != "" {
+			ifType = "TCPClientInterface"
+		} else {
+			ifType = "TCPServerInterface"
+		}
+	}
+
+	if !strings.EqualFold(ifType, "UDPInterface") &&
+		!strings.EqualFold(ifType, "TCPClientInterface") &&
+		!strings.EqualFold(ifType, "TCPServerInterface") &&
+		!strings.EqualFold(ifType, "AutoInterface") &&
+		!strings.EqualFold(ifType, "AX25KISSInterface") &&
+		!strings.EqualFold(ifType, "KISSInterface") &&
+		!strings.EqualFold(ifType, "BackboneInterface") &&
+		!strings.EqualFold(ifType, "BackboneClientInterface") &&
+		!strings.EqualFold(ifType, "WeaveInterface") &&
+		!strings.EqualFold(ifType, "I2PInterface") &&
+		!strings.EqualFold(ifType, "PipeInterface") &&
+		!strings.EqualFold(ifType, "SerialInterface") &&
+		!strings.EqualFold(ifType, "RNodeInterface") &&
+		!strings.EqualFold(ifType, "RNodeMultiInterface") {
+		if strings.TrimSpace(r.InterfacePath) != "" {
+			pyPath := filepath.Join(r.InterfacePath, ifType+".py")
+			goPath := filepath.Join(r.InterfacePath, ifType+".go")
+			if _, err := os.Stat(pyPath); err == nil {
+				return false, fmt.Errorf("external Python interfaces are not supported: found %q", pyPath)
+			}
+			if _, err := os.Stat(goPath); err == nil {
+				return false, fmt.Errorf("external Go interfaces are not supported yet: found %q", goPath)
+			}
+		}
+		Logf(LogError, "Could not locate external interface module %q in %q", ifType+".py", r.InterfacePath)
+		return false, nil
+	}
+
+	base, err := buildInterfaceFromType(strings.TrimSpace(name), ifType)
+	if err != nil {
+		return false, err
+	}
+	if base == nil {
+		return false, fmt.Errorf("interface %q type %q initialisation returned nil", name, ifType)
+	}
+
+	base.OUT = parseTruthy(getFirst(kv, "outgoing"), true)
+	base.IngressControl = ingressControl
+	base.ICMaxHeldAnnounces = icMaxHeld
+	base.ICBurstHold = icBurstHold
+	base.ICBurstFreqNew = icBurstFreqNew
+	base.ICBurstFreq = icBurstFreq
+	base.ICNewTime = icNewTime
+	base.ICBurstPenalty = icBurstPenalty
+	base.ICHeldReleaseInterval = icHeldRelease
+	base.SetAnnounceRateConfig(announceRateTarget, announceRateGrace, announceRatePenalty)
+
+	ifc := base
+
+	if strings.EqualFold(ifType, "UDPInterface") {
+		ifc.IN = true
+		if ifc.Bitrate == 0 {
+			ifc.Bitrate = 10 * 1000 * 1000
+		}
+		if ifc.HWMTU == 0 {
+			ifc.HWMTU = 1064
+		}
+		if ifc.IFACSize == 0 {
+			ifc.IFACSize = 16
+		}
+		ifc.FixedMTU = true
+
+		device := getFirst(kv, "device")
+		port, _ := parseInt(getFirst(kv, "port"))
+		listenIP := getFirst(kv, "listen_ip")
+		listenPort, _ := parseInt(getFirst(kv, "listen_port"))
+		forwardIP := getFirst(kv, "forward_ip")
+		forwardPort, _ := parseInt(getFirst(kv, "forward_port"))
+		if port > 0 {
+			if listenPort == 0 {
+				listenPort = port
+			}
+			if forwardPort == 0 {
+				forwardPort = port
+			}
+		}
+		if strings.TrimSpace(device) != "" {
+			bcast, derr := broadcastForInterface(device)
+			if derr != nil {
+				return false, fmt.Errorf("Interface %q device %q error: %w", name, device, derr)
+			}
+			if listenIP == "" {
+				listenIP = bcast.String()
+			}
+			if forwardIP == "" {
+				forwardIP = bcast.String()
+			}
+		}
+		if err := ifc.ConfigureUDP(listenIP, listenPort, forwardIP, forwardPort); err != nil {
+			return false, fmt.Errorf("Interface %q UDP config error: %w", name, err)
+		}
+		if err := ifc.StartUDP(); err != nil {
+			return false, fmt.Errorf("Interface %q UDP listener error: %w", name, err)
+		}
+	}
+
+	if strings.EqualFold(ifType, "AutoInterface") {
+		if err := ifc.ConfigureAutoInterface(kv); err != nil {
+			return false, fmt.Errorf("Interface %q AutoInterface config error: %w", name, err)
+		}
+		if err := ifc.StartAutoInterface(); err != nil {
+			return false, fmt.Errorf("Interface %q AutoInterface start error: %w", name, err)
+		}
+	}
+
+	if strings.EqualFold(ifType, "AX25KISSInterface") {
+		axIf, err := ifaces.NewAX25KISSInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q AX25KISS config error: %w", name, err)
+		}
+		inheritInterfaceConfig(axIf, ifc)
+		ifc = axIf
+	}
+
+	if strings.EqualFold(ifType, "KISSInterface") {
+		kIf, err := ifaces.NewKISSInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q KISS config error: %w", name, err)
+		}
+		inheritInterfaceConfig(kIf, ifc)
+		ifc = kIf
+	}
+
+	if strings.EqualFold(ifType, "BackboneInterface") {
+		bbIf, err := ifaces.NewBackboneInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q Backbone config error: %w", name, err)
+		}
+		inheritInterfaceConfig(bbIf, ifc)
+		ifc = bbIf
+	}
+
+	if strings.EqualFold(ifType, "BackboneClientInterface") {
+		bcIf, err := ifaces.NewBackboneClientInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q Backbone client config error: %w", name, err)
+		}
+		inheritInterfaceConfig(bcIf, ifc)
+		ifc = bcIf
+	}
+
+	if strings.EqualFold(ifType, "WeaveInterface") {
+		wIf, err := ifaces.NewWeaveInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q Weave config error: %w", name, err)
+		}
+		inheritInterfaceConfig(wIf, ifc)
+		wIf.IngressControl = false
+		ifc = wIf
+	}
+
+	if strings.EqualFold(ifType, "I2PInterface") {
+		if strings.TrimSpace(getFirst(kv, "storagepath")) == "" && strings.TrimSpace(r.StoragePath) != "" {
+			kv["storagepath"] = r.StoragePath
+		}
+		i2pIf, err := ifaces.NewI2PInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q I2P config error: %w", name, err)
+		}
+		inheritInterfaceConfig(i2pIf, ifc)
+		ifc = i2pIf
+	}
+
+	if strings.EqualFold(ifType, "PipeInterface") {
+		pIf, err := ifaces.NewPipeInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q Pipe config error: %w", name, err)
+		}
+		inheritInterfaceConfig(pIf, ifc)
+		ifc = pIf
+	}
+
+	if strings.EqualFold(ifType, "SerialInterface") {
+		sIf, err := ifaces.NewSerialInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q Serial config error: %w", name, err)
+		}
+		inheritInterfaceConfig(sIf, ifc)
+		ifc = sIf
+	}
+
+	if strings.EqualFold(ifType, "RNodeMultiInterface") {
+		rnmIf, err := ifaces.NewRNodeMultiInterface(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q RNodeMulti config error: %w", name, err)
+		}
+		inheritInterfaceConfig(rnmIf, ifc)
+		ifc = rnmIf
+	}
+
+	if strings.EqualFold(ifType, "RNodeInterface") {
+		rnIf, err := ifaces.NewRNodeInterfaceFromConfig(strings.TrimSpace(name), kv)
+		if err != nil {
+			return false, fmt.Errorf("Interface %q RNode config error: %w", name, err)
+		}
+		inheritInterfaceConfig(rnIf, ifc)
+		ifc = rnIf
+	}
+
+	if strings.EqualFold(ifType, "TCPClientInterface") {
+		host := getFirst(kv, "target_host", "remote")
+		port, _ := parseInt(getFirst(kv, "target_port", "port"))
+		kiss := parseTruthy(getFirst(kv, "kiss_framing"), false)
+		i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
+		fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
+		connectTimeoutS, _ := parseFloat(getFirst(kv, "connect_timeout"))
+		reconnectWaitS, _ := parseFloat(getFirst(kv, "reconnect_wait"))
+		var maxReconnect *int
+		if v, ok := parseInt(getFirst(kv, "max_reconnect_tries")); ok {
+			maxReconnect = &v
+		}
+
+		tcpIf, err := ifaces.NewTCPClientInterfaceFromConfig(ifaces.TCPClientConfig{
+			Name:            strings.TrimSpace(name),
+			TargetHost:      host,
+			TargetPort:      port,
+			KISSFraming:     kiss,
+			I2PTunneled:     i2p,
+			FixedMTU:        fixedMTU,
+			ConnectTimeout:  time.Duration(connectTimeoutS * float64(time.Second)),
+			ReconnectWait:   time.Duration(reconnectWaitS * float64(time.Second)),
+			MaxReconnectTry: maxReconnect,
+			IFACSize:        ifc.IFACSize,
+			IFACNetname:     ifc.IFACNetnameVal,
+			IFACNetkey:      ifc.IFACNetkeyVal,
+		})
+		if err != nil {
+			return false, fmt.Errorf("Interface %q TCP client config error: %w", name, err)
+		}
+		inheritInterfaceConfig(tcpIf, ifc)
+		ifc = tcpIf
+	}
+
+	if strings.EqualFold(ifType, "TCPServerInterface") {
+		listenIP := getFirst(kv, "listen_ip", "listen_on", "bind_ip")
+		listenPort, _ := parseInt(getFirst(kv, "listen_port", "port"))
+		device := getFirst(kv, "device")
+		preferIPv6 := parseTruthy(getFirst(kv, "prefer_ipv6"), false)
+		kiss := parseTruthy(getFirst(kv, "kiss_framing"), false)
+		i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
+		fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
+
+		logger := tcpLogAdapter{}
+		server, err := ifaces.NewTCPServerFromConfig(nil, logger, ifaces.TCPServerConfig{
+			Name:        strings.TrimSpace(name),
+			Device:      device,
+			ListenIP:    listenIP,
+			ListenPort:  listenPort,
+			PreferIPv6:  preferIPv6,
+			KISSFraming: kiss,
+			I2PTunneled: i2p,
+			FixedMTU:    fixedMTU,
+			IFACSize:    ifc.IFACSize,
+			IFACNetname: ifc.IFACNetnameVal,
+			IFACNetkey:  ifc.IFACNetkeyVal,
+		})
+		if err != nil {
+			return false, fmt.Errorf("Interface %q TCP server config error: %w", name, err)
+		}
+
+		parent := &Interface{
+			Name:              strings.TrimSpace(name),
+			Type:              "TCPServerInterface",
+			IN:                true,
+			OUT:               false,
+			DriverImplemented: true,
+			Online:            true,
+			Bitrate:           server.Bitrate,
+			HWMTU:             server.HWMTU,
+			AutoconfigureMTU:  !server.FixedMTU,
+			FixedMTU:          server.FixedMTU,
+			IFACSize:          server.IFACSize,
+			IFACNetnameVal:    server.IFACNetnameVal,
+			IFACNetkeyVal:     server.IFACNetkeyVal,
+			IFACKey:           append([]byte(nil), server.IFACKey...),
+			IFACIdentity:      server.IFACIdentity,
+			IFACSignature:     append([]byte(nil), server.IFACSignature...),
+		}
+		parent.SetTCPServer(server)
+		parent.SetClientCountFunc(server.Clients)
+
+		server.OnNewClient = func(ci *ifaces.TCPClientInterface) {
+			if ci == nil {
+				return
+			}
+			peer := &Interface{
+				Name:              ci.String(),
+				Type:              "TCPClientInterface",
+				Parent:            parent,
+				IN:                true,
+				OUT:               true,
+				DriverImplemented: true,
+				Online:            true,
+				Bitrate:           parent.Bitrate,
+				HWMTU:             parent.HWMTU,
+				AutoconfigureMTU:  parent.AutoconfigureMTU,
+				FixedMTU:          parent.FixedMTU,
+				IFACSize:          parent.IFACSize,
+				IFACNetnameVal:    parent.IFACNetnameVal,
+				IFACNetkeyVal:     parent.IFACNetkeyVal,
+				IFACKey:           append([]byte(nil), parent.IFACKey...),
+				IFACIdentity:      parent.IFACIdentity,
+				IFACSignature:     append([]byte(nil), parent.IFACSignature...),
+			}
+			peer.SetTCPClient(ci)
+			ci.Owner = tcpOwnerAdapter{ifc: peer}
+			AddInterface(peer)
+		}
+
+		if err := server.Start(); err != nil {
+			return false, fmt.Errorf("Interface %q TCP server start error: %w", name, err)
+		}
+
+		inheritInterfaceConfig(parent, ifc)
+		ifc = parent
+	}
+
+	r.AddInterface(ifc, mode, bitrate, ifacSize, ifacNetname, ifacNetkey, announceCap, announceRateTarget, announceRateGrace, announceRatePenalty)
+	return true, nil
+}
+
 func buildInterfaceFromType(name, ifType string) (*Interface, error) {
 	ifType = strings.TrimSpace(ifType)
 	if ifType == "" {
@@ -1829,6 +2334,46 @@ func parseConfigObjInterfacesOrdered(path string) ([]interfaceConfigEntry, error
 	return out, nil
 }
 
+func findInterfaceByName(name string) *Interface {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	for _, ifc := range Interfaces {
+		if ifc == nil {
+			continue
+		}
+		if ifc.Name == name || ifc.String() == name {
+			return ifc
+		}
+	}
+	return nil
+}
+
+func (r *Reticulum) getInterfaceConfigByName(name string) (map[string]string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || r == nil {
+		return nil, false
+	}
+
+	if ordered, err := parseConfigObjInterfacesOrdered(r.ConfigPath); err == nil && len(ordered) > 0 {
+		for _, entry := range ordered {
+			if strings.EqualFold(strings.TrimSpace(entry.Name), name) {
+				return entry.KV, true
+			}
+		}
+		return nil, false
+	}
+
+	ini := parseINIFallbackInterfaces(r.Config)
+	for k, v := range ini {
+		if strings.EqualFold(strings.TrimSpace(k), name) {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 func splitKeyValue(line string) (key, value string, ok bool) {
 	parts := strings.SplitN(line, "=", 2)
 	if len(parts) != 2 {
@@ -2124,6 +2669,20 @@ func (r *Reticulum) handleRPC(conn RPCConn) {
 			rpcSendFloat(conn, Transport.GetPacketQ(hash))
 		}
 	}
+	if action, ok := call["call"].(string); ok {
+		name, _ := call["interface"].(string)
+		if name == "" {
+			name, _ = call["name"].(string)
+		}
+		switch action {
+		case "halt_interface":
+			rpcSendError(conn, r.HaltInterface(name))
+		case "resume_interface":
+			rpcSendError(conn, r.ResumeInterface(name))
+		case "reload_interface":
+			rpcSendError(conn, r.ReloadInterface(name))
+		}
+	}
 	if drop, ok := call["drop"].(string); ok {
 		switch drop {
 		case "path":
@@ -2155,11 +2714,41 @@ func rpcSendFloat(conn RPCConn, value *float64) {
 	_ = conn.Send(*value)
 }
 
+func rpcSendError(conn RPCConn, err error) {
+	if err == nil {
+		_ = conn.Send(nil)
+		return
+	}
+	_ = conn.Send(err.Error())
+}
+
 func (r *Reticulum) getRPCClient() (RPCConn, error) {
 	if r.rpcAddr == "" || r.rpcNetwork == "" {
 		return nil, errors.New("rpc endpoint not configured")
 	}
 	return dialRPC(r.rpcNetwork, r.rpcAddr, r.RPCKey)
+}
+
+func (r *Reticulum) rpcCallInterfaceMgmt(action, name string) error {
+	client, err := r.getRPCClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if err := client.Send(map[string]any{"call": action, "interface": name}); err != nil {
+		return err
+	}
+	var resp any
+	if err := client.Recv(&resp); err != nil {
+		return err
+	}
+	if resp == nil {
+		return nil
+	}
+	if s, ok := resp.(string); ok && strings.TrimSpace(s) != "" {
+		return errors.New(s)
+	}
+	return nil
 }
 
 // Ниже — только подписи/основная логика, по сути 1:1 с Python.
