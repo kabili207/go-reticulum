@@ -47,10 +47,26 @@ go run ./examples/link -server -config <dir>
 go run ./examples/link -destination <hex> -config <dir>
 ```
 
+### TCP uplink config (WIP)
+
+The Go port can bring up a `TCPClientInterface` from config (enough to test uplinks).
+
+Example snippet for `config`:
+
+```ini
+[interfaces]
+  [[Uplink]]
+    type = TCPClientInterface
+    enabled = Yes
+    target_host = reticulum.betweentheborders.com
+    target_port = 4242
+```
+
 ## Parity & docs
 
 - `PARITY_*.md` files contain the remaining parity TODOs vs Python Reticulum (no unrelated wishlists).
 - Ideally, each parity item is closed by a code change plus a test/verification step.
+- Note: the Python Reticulum supports “external interfaces” by loading `<Type>.py` modules from `interfacepath`. The Go port does not execute/load those Python modules; if such a file exists, startup will error to avoid silently running with a placeholder interface.
 
 ## Disclaimer
 

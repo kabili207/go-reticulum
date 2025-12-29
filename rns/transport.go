@@ -45,6 +45,8 @@ const TransportAppName = "rnstransport"
 const (
 	MaxReceipts                 = 1024
 	TransportPathRequestTimeout = 15.0
+	// DestinationTimeout mirrors Python Transport.DESTINATION_TIMEOUT.
+	DestinationTimeout = 7 * 24 * time.Hour
 	packetCacheMaxEntries       = 512
 	PathfinderMaxHops           = 128
 	pathfinderRetryLimit        = 1
@@ -80,6 +82,8 @@ var (
 	// TransportIdentity is the identity used for transport control destinations
 	// like remote management. It is initialised in Start() if missing.
 	TransportIdentity *Identity
+
+	ProbeDestination *Destination
 
 	Interfaces      []*Interface
 	Destinations    []*Destination
@@ -828,6 +832,24 @@ func TransportExitHandler() {
 	_ = saveTunnelTable()
 }
 
+// TransportPersistData persists transport tables, mirroring Python's
+// Transport.persist_data() / Reticulum.__persist_data() behaviour.
+func TransportPersistData() {
+	if inst := GetInstance(); inst != nil && inst.IsConnectedToSharedInstance {
+		return
+	}
+	if err := savePacketHashlist(); err != nil {
+		Logf(LogError, "Error while saving packet hashlist to disk: %v", err)
+	}
+	if err := saveDestinationTable(); err != nil {
+		Logf(LogError, "Error while saving destination table to disk: %v", err)
+	}
+	if err := saveTunnelTable(); err != nil {
+		Logf(LogError, "Error while saving tunnel table to disk: %v", err)
+	}
+	lastTablesPersisted = time.Now()
+}
+
 func savePacketHashlist() error {
 	if Owner == nil || Owner.IsConnectedToSharedInstance {
 		return nil
@@ -1360,11 +1382,35 @@ func configureControlDestinations() {
 		return
 	}
 	ensureCoreControlDestinations()
+	ensureProbeDestination()
 	if !RemoteManagementEnabled() || Owner.IsConnectedToSharedInstance || TransportIdentity == nil {
 		disableRemoteManagementDestination()
 		return
 	}
 	enableRemoteManagementDestination()
+}
+
+func ensureProbeDestination() {
+	if Owner == nil {
+		return
+	}
+	if !ProbeDestinationEnabled() || Owner.IsConnectedToSharedInstance || TransportIdentity == nil {
+		ProbeDestination = nil
+		return
+	}
+	if ProbeDestination != nil {
+		return
+	}
+	dest, err := NewDestination(TransportIdentity, DestinationIN, DestinationSINGLE, TransportAppName, "probe")
+	if err != nil {
+		Logf(LogError, "Could not create probe destination: %v", err)
+		return
+	}
+	dest.AcceptsLinks(false)
+	_ = dest.SetProofStrategy(DestinationPROVE_ALL)
+	dest.Announce(nil, false, nil, nil, true)
+	ProbeDestination = dest
+	Logf(LogNotice, "Transport Instance will respond to probe requests on %s", dest)
 }
 
 func ensureCoreControlDestinations() {
@@ -2186,9 +2232,14 @@ func Outbound(p *Packet) bool {
 	}
 
 	JobsLocked = true
-	defer func() { JobsLocked = false }()
+	var sent bool
+	defer func() {
+		JobsLocked = false
+		if sent && Owner != nil {
+			Owner.ShouldPersistData()
+		}
+	}()
 
-	sent := false
 	outTime := time.Now()
 
 	genReceipt := false
@@ -2421,7 +2472,12 @@ func Inbound(raw []byte, ifc *Interface) {
 	}
 
 	JobsLocked = true
-	defer func() { JobsLocked = false }()
+	defer func() {
+		JobsLocked = false
+		if Owner != nil {
+			Owner.ShouldPersistData()
+		}
+	}()
 
 	p := NewPacket(nil, raw)
 	if !p.Unpack() {

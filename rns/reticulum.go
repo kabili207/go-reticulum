@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,6 +157,31 @@ type Reticulum struct {
 	rpcAddr    string
 	rpcNetwork string      // "tcp" / "unix"
 	rpcLn      RPCListener // обёртка (ниже интерфейс)
+}
+
+// Optional API parity with Python Reticulum/RNS daemon management calls.
+// These are currently no-ops in the Go port (interfaces can be detached directly).
+func (r *Reticulum) HaltInterface(_ string) error   { return nil }
+func (r *Reticulum) ResumeInterface(_ string) error { return nil }
+func (r *Reticulum) ReloadInterface(_ string) error { return nil }
+
+type tcpLogAdapter struct{}
+
+func (tcpLogAdapter) Debugf(format string, args ...any) { Logf(LogDebug, format, args...) }
+func (tcpLogAdapter) Infof(format string, args ...any)  { Logf(LogInfo, format, args...) }
+func (tcpLogAdapter) Warnf(format string, args ...any)  { Logf(LogWarning, format, args...) }
+func (tcpLogAdapter) Errorf(format string, args ...any) { Logf(LogError, format, args...) }
+
+type tcpOwnerAdapter struct{ ifc *Interface }
+
+func (o tcpOwnerAdapter) Inbound(data []byte, _ *ifaces.TCPClientInterface) {
+	if o.ifc == nil || len(data) == 0 {
+		return
+	}
+	o.ifc.RXB += uint64(len(data))
+	if ifaces.InboundHandler != nil {
+		ifaces.InboundHandler(data, o.ifc)
+	}
 }
 
 // RPCListener — абстракция над TCP/Unix листенером.
@@ -385,7 +411,7 @@ var (
 
 // NewReticulum аналог __init__
 func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
-	requireSharedInstance bool, sharedInstanceType *string) (*Reticulum, error) {
+	requireSharedInstance bool, sharedInstanceType *string) (ret *Reticulum, retErr error) {
 
 	if instance != nil {
 		return nil, errAlreadyRunning
@@ -404,7 +430,18 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		ifacSalt:           IFAC_SALT,
 		lastDataPersist:    time.Now(),
 		lastCacheClean:     time.Unix(0, 0),
+		// Python parity: runtime interface panic behaviour is disabled by default.
+		PanicOnInterfaceError: false,
 	}
+
+	// Python parity: set the singleton instance early so identity/storage helpers
+	// use the configured config dir during initialisation.
+	instance = r
+	defer func() {
+		if retErr != nil && instance == r {
+			instance = nil
+		}
+	}()
 
 	// конфиг-дир
 	if configDir != nil {
@@ -576,7 +613,6 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 	}
 
 	// сигналы и exit handler
-	instance = r
 	setupExitHandlers()
 	SetExitHandler(exitHandler)
 
@@ -794,8 +830,8 @@ func (r *Reticulum) applyConfig() error {
 				Logf(LogWarning, "Forcing shared instance bitrate of %s", PrettySpeed(float64(v)))
 			}
 		}
-		if v, _ := sec.AsBool("panic_on_interface_error"); v {
-			r.PanicOnInterfaceError = true
+		if v, err := sec.AsBool("panic_on_interface_error"); err == nil {
+			r.PanicOnInterfaceError = v
 		}
 		if v, err := sec.AsBool("use_implicit_proof"); err == nil {
 			useImplicitProof = v
@@ -988,35 +1024,63 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 		return nil
 	}
 
-	// Prefer Python-compatible ConfigObj `[[Interface Name]]` subsections under `[interfaces]`.
-	interfacesCfg, _ := parseConfigObjInterfaces(r.ConfigPath)
-	if len(interfacesCfg) == 0 {
-		// Fallback: INI-compat sections like `[interfaces.MyInterface]`.
-		interfacesCfg = parseINIFallbackInterfaces(r.Config)
-	}
-	if len(interfacesCfg) == 0 {
-		Log("No interfaces configured in reticulum.conf", LogVerbose)
-		return nil
+	var configs []interfaceConfigEntry
+	if ordered, err := parseConfigObjInterfacesOrdered(r.ConfigPath); err == nil && len(ordered) > 0 {
+		configs = ordered
+	} else {
+		ini := parseINIFallbackInterfaces(r.Config)
+		if len(ini) == 0 {
+			Log("No interfaces configured in reticulum.conf", LogVerbose)
+			return nil
+		}
+		names := make([]string, 0, len(ini))
+		for name := range ini {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		configs = make([]interfaceConfigEntry, 0, len(names))
+		for _, name := range names {
+			configs = append(configs, interfaceConfigEntry{Name: name, KV: ini[name]})
+		}
 	}
 
+	seenNames := make(map[string]struct{}, len(configs))
 	broughtUp := 0
-	var bringupErrors []string
-	for name, kv := range interfacesCfg {
-		enabled := parseTruthy(getFirst(kv, "enabled", "enable"), true)
+
+	for _, entry := range configs {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seenNames[name]; ok {
+			msg := fmt.Sprintf("The interface name %q was already used. Check your configuration file for errors!", name)
+			Log(msg, LogError)
+			return errors.New(msg)
+		}
+		seenNames[name] = struct{}{}
+
+		kv := entry.KV
+
+		// Python parity: an interface is only started if it is explicitly enabled.
+		// Missing keys mean disabled.
+		enabled := parseTruthy(getFirst(kv, "interface_enabled", "enabled", "enable"), false)
 		if !enabled {
+			Logf(LogDebug, "Skipping disabled interface %q", name)
 			continue
 		}
 
-		mode := parseInterfaceMode(getFirst(kv, "interface_mode", "mode"))
+		mode := parseInterfaceMode(getFirst(kv, "interface_mode", "selected_interface_mode", "mode"))
 
 		var bitrate *int
-		if v, ok := parseInt(getFirst(kv, "bitrate")); ok && v >= MINIMUM_BITRATE {
+		if v, ok := parseInt(getFirst(kv, "configured_bitrate", "bitrate")); ok && v >= MINIMUM_BITRATE {
 			bitrate = &v
 		}
 
+		// Python parity: announce_cap is specified as percent (0 < v <= 100) and stored as fraction.
 		var announceCap *float64
-		if v, ok := parseFloat(getFirst(kv, "announce_cap")); ok && v > 0 {
-			announceCap = &v
+		if v, ok := parseFloat(getFirst(kv, "announce_cap")); ok && v > 0 && v <= 100 {
+			f := v / 100.0
+			announceCap = &f
 		}
 
 		var ifacSize *int
@@ -1082,50 +1146,100 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 
 		ifType := strings.TrimSpace(getFirst(kv, "type"))
 		if ifType == "" {
-			msg := fmt.Sprintf("Interface %q missing type", name)
-			Log(msg+", skipping", LogWarning)
-			bringupErrors = append(bringupErrors, msg)
-			continue
+			msg := fmt.Sprintf("The interface %q could not be created. Check your configuration file for errors!", name)
+			Log(msg, LogError)
+			Log("The contained exception was: missing interface type", LogError)
+			return errors.New("missing interface type")
 		}
 
-		// We don't have drivers yet, but we keep the same type names as Python.
+		// Python compatibility: normalise Backbone key aliases.
+		if strings.EqualFold(ifType, "BackboneInterface") || strings.EqualFold(ifType, "BackboneClientInterface") {
+			if v := strings.TrimSpace(getFirst(kv, "port")); v != "" {
+				if strings.TrimSpace(getFirst(kv, "listen_port")) == "" {
+					kv["listen_port"] = v
+				}
+				if strings.TrimSpace(getFirst(kv, "target_port")) == "" {
+					kv["target_port"] = v
+				}
+			}
+			if v := strings.TrimSpace(getFirst(kv, "remote")); v != "" && strings.TrimSpace(getFirst(kv, "target_host")) == "" {
+				kv["target_host"] = v
+			}
+			if v := strings.TrimSpace(getFirst(kv, "listen_on")); v != "" && strings.TrimSpace(getFirst(kv, "listen_ip")) == "" {
+				kv["listen_ip"] = v
+			}
+		}
+
+		// Python parity: BackboneInterface behaves like BackboneClientInterface
+		// when a target host is specified.
+		if strings.EqualFold(ifType, "BackboneInterface") && strings.TrimSpace(getFirst(kv, "target_host", "remote")) != "" {
+			ifType = "BackboneClientInterface"
+		}
+
+		// Config parity convenience: allow `TCPInterface` to mean either a
+		// client (when target_host/target_port is provided) or a server
+		// (when listen_ip/device is provided).
+		if strings.EqualFold(ifType, "TCPInterface") {
+			if strings.TrimSpace(getFirst(kv, "target_host", "remote")) != "" {
+				ifType = "TCPClientInterface"
+			} else {
+				ifType = "TCPServerInterface"
+			}
+		}
+
 		knownType := false
 		switch strings.ToLower(ifType) {
-		case "ax25kissinterface", "autointerface", "udpinterface", "tcpinterface", "serialinterface", "kissinterface", "localinterface", "rnodeinterface", "rnodemultiinterface", "i2pinterface", "weaveinterface", "backboneinterface", "backboneclientinterface", "pipeinterface":
+		case "ax25kissinterface", "autointerface", "udpinterface", "tcpclientinterface", "tcpserverinterface", "serialinterface", "kissinterface", "rnodeinterface", "rnodemultiinterface", "i2pinterface", "weaveinterface", "backboneinterface", "backboneclientinterface", "pipeinterface":
 			knownType = true
 		}
 		if !knownType {
-			msg := fmt.Sprintf("Interface %q has unknown type %q", name, ifType)
-			Log(msg+" (placeholder will be created)", LogWarning)
-			bringupErrors = append(bringupErrors, msg)
+			// Python parity: if no internal interface matched, try interfacepath.
+			if strings.TrimSpace(r.InterfacePath) != "" {
+				py := filepath.Join(r.InterfacePath, ifType+".py")
+				goSrc := filepath.Join(r.InterfacePath, ifType+".go")
+				if fileExists(py) {
+					msg := fmt.Sprintf("External interface initialisation failed for %s / %s (external Python interfaces are not supported in Go port)", ifType, name)
+					Log(msg, LogError)
+					return errors.New(msg)
+				}
+				if fileExists(goSrc) {
+					msg := fmt.Sprintf("External interface %q found at %s but external Go interfaces are not supported yet", ifType, goSrc)
+					Log(msg, LogError)
+					return errors.New(msg)
+				}
+			}
+			Logf(LogError, "Could not locate external interface module %q in %q", ifType+".py", r.InterfacePath)
+			continue
 		}
 
-		ifc, ifErr := buildInterfaceFromType(strings.TrimSpace(name), ifType)
-		if ifErr != nil {
-			msg := fmt.Sprintf("Interface %q type %q not available: %v", name, ifType, ifErr)
-			Log(msg+" (placeholder will be created)", LogWarning)
-			bringupErrors = append(bringupErrors, msg)
+		base, err := buildInterfaceFromType(strings.TrimSpace(name), ifType)
+		if err != nil {
+			msg := fmt.Sprintf("The interface %q could not be created. Check your configuration file for errors!", name)
+			Log(msg, LogError)
+			Log("The contained exception was: "+err.Error(), LogError)
+			return err
 		}
-		if ifc == nil {
-			ifc = &Interface{Name: strings.TrimSpace(name), Type: ifType}
+		if base == nil {
+			return fmt.Errorf("interface %q type %q initialisation returned nil", name, ifType)
 		}
-		// Default directionality is interface-type specific in Python.
-		// Set conservative defaults here; specialized drivers may override later.
-		ifc.OUT = true
-		ifc.IngressControl = ingressControl
-		ifc.ICMaxHeldAnnounces = icMaxHeld
-		ifc.ICBurstHold = icBurstHold
-		ifc.ICBurstFreqNew = icBurstFreqNew
-		ifc.ICBurstFreq = icBurstFreq
-		ifc.ICNewTime = icNewTime
-		ifc.ICBurstPenalty = icBurstPenalty
-		ifc.ICHeldReleaseInterval = icHeldRelease
-		ifc.SetAnnounceRateConfig(announceRateTarget, announceRateGrace, announceRatePenalty)
+
+		// Python parity: default outgoing is enabled, but can be disabled via `outgoing = False`.
+		base.OUT = parseTruthy(getFirst(kv, "outgoing"), true)
+		base.IngressControl = ingressControl
+		base.ICMaxHeldAnnounces = icMaxHeld
+		base.ICBurstHold = icBurstHold
+		base.ICBurstFreqNew = icBurstFreqNew
+		base.ICBurstFreq = icBurstFreq
+		base.ICNewTime = icNewTime
+		base.ICBurstPenalty = icBurstPenalty
+		base.ICHeldReleaseInterval = icHeldRelease
+		base.SetAnnounceRateConfig(announceRateTarget, announceRateGrace, announceRatePenalty)
+
+		ifc := base
 
 		if strings.EqualFold(ifType, "UDPInterface") {
-			// Python: IN=True, OUT=False, BITRATE_GUESS=10Mbps, DEFAULT_IFAC_SIZE=16, HW_MTU=1064
+			// Python: IN=True, BITRATE_GUESS=10Mbps, DEFAULT_IFAC_SIZE=16, HW_MTU=1064
 			ifc.IN = true
-			ifc.OUT = false
 			if ifc.Bitrate == 0 {
 				ifc.Bitrate = 10 * 1000 * 1000
 			}
@@ -1152,153 +1266,247 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 				}
 			}
 			if strings.TrimSpace(device) != "" {
-				bcast, err := broadcastForInterface(device)
-				if err != nil {
-					msg := fmt.Sprintf("Interface %q device %q error: %v", name, device, err)
-					Log(msg, LogWarning)
-					bringupErrors = append(bringupErrors, msg)
-				} else {
-					if listenIP == "" {
-						listenIP = bcast.String()
-					}
-					if forwardIP == "" {
-						forwardIP = bcast.String()
-					}
+				bcast, derr := broadcastForInterface(device)
+				if derr != nil {
+					return fmt.Errorf("Interface %q device %q error: %w", name, device, derr)
+				}
+				if listenIP == "" {
+					listenIP = bcast.String()
+				}
+				if forwardIP == "" {
+					forwardIP = bcast.String()
 				}
 			}
 			if err := ifc.ConfigureUDP(listenIP, listenPort, forwardIP, forwardPort); err != nil {
-				msg := fmt.Sprintf("Interface %q UDP config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
+				return fmt.Errorf("Interface %q UDP config error: %w", name, err)
 			}
 			if err := ifc.StartUDP(); err != nil {
-				msg := fmt.Sprintf("Interface %q UDP listener error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
+				return fmt.Errorf("Interface %q UDP listener error: %w", name, err)
 			}
 		}
 
 		if strings.EqualFold(ifType, "AutoInterface") {
 			if err := ifc.ConfigureAutoInterface(kv); err != nil {
-				msg := fmt.Sprintf("Interface %q AutoInterface config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
+				return fmt.Errorf("Interface %q AutoInterface config error: %w", name, err)
 			}
 			if err := ifc.StartAutoInterface(); err != nil {
-				msg := fmt.Sprintf("Interface %q AutoInterface start error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
+				return fmt.Errorf("Interface %q AutoInterface start error: %w", name, err)
 			}
 		}
 
 		if strings.EqualFold(ifType, "AX25KISSInterface") {
 			axIf, err := ifaces.NewAX25KISSInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q AX25KISS config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(axIf, ifc)
-				ifc = axIf
+				return fmt.Errorf("Interface %q AX25KISS config error: %w", name, err)
 			}
+			inheritInterfaceConfig(axIf, ifc)
+			ifc = axIf
 		}
 
 		if strings.EqualFold(ifType, "KISSInterface") {
 			kIf, err := ifaces.NewKISSInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q KISS config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(kIf, ifc)
-				ifc = kIf
+				return fmt.Errorf("Interface %q KISS config error: %w", name, err)
 			}
+			inheritInterfaceConfig(kIf, ifc)
+			ifc = kIf
 		}
 
 		if strings.EqualFold(ifType, "BackboneInterface") {
 			bbIf, err := ifaces.NewBackboneInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q Backbone config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(bbIf, ifc)
-				ifc = bbIf
+				return fmt.Errorf("Interface %q Backbone config error: %w", name, err)
 			}
+			inheritInterfaceConfig(bbIf, ifc)
+			ifc = bbIf
 		}
 
 		if strings.EqualFold(ifType, "BackboneClientInterface") {
 			bcIf, err := ifaces.NewBackboneClientInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q Backbone client config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(bcIf, ifc)
-				ifc = bcIf
+				return fmt.Errorf("Interface %q Backbone client config error: %w", name, err)
 			}
+			inheritInterfaceConfig(bcIf, ifc)
+			ifc = bcIf
 		}
 
 		if strings.EqualFold(ifType, "WeaveInterface") {
 			wIf, err := ifaces.NewWeaveInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q Weave config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(wIf, ifc)
-				// Python parity: WeaveInterface.should_ingress_limit() всегда false.
-				wIf.IngressControl = false
-				ifc = wIf
+				return fmt.Errorf("Interface %q Weave config error: %w", name, err)
 			}
+			inheritInterfaceConfig(wIf, ifc)
+			// Python parity: WeaveInterface.should_ingress_limit() always false.
+			wIf.IngressControl = false
+			ifc = wIf
 		}
 
 		if strings.EqualFold(ifType, "I2PInterface") {
+			// Python injects Reticulum.storagepath into I2PInterface config.
+			if strings.TrimSpace(getFirst(kv, "storagepath")) == "" && strings.TrimSpace(r.StoragePath) != "" {
+				kv["storagepath"] = r.StoragePath
+			}
 			i2pIf, err := ifaces.NewI2PInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q I2P config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(i2pIf, ifc)
-				ifc = i2pIf
+				return fmt.Errorf("Interface %q I2P config error: %w", name, err)
 			}
+			inheritInterfaceConfig(i2pIf, ifc)
+			ifc = i2pIf
 		}
 
 		if strings.EqualFold(ifType, "PipeInterface") {
 			pIf, err := ifaces.NewPipeInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q Pipe config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(pIf, ifc)
-				ifc = pIf
+				return fmt.Errorf("Interface %q Pipe config error: %w", name, err)
 			}
+			inheritInterfaceConfig(pIf, ifc)
+			ifc = pIf
 		}
 
 		if strings.EqualFold(ifType, "SerialInterface") {
 			sIf, err := ifaces.NewSerialInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q Serial config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(sIf, ifc)
-				ifc = sIf
+				return fmt.Errorf("Interface %q Serial config error: %w", name, err)
 			}
+			inheritInterfaceConfig(sIf, ifc)
+			ifc = sIf
 		}
 
 		if strings.EqualFold(ifType, "RNodeMultiInterface") {
 			rnmIf, err := ifaces.NewRNodeMultiInterface(strings.TrimSpace(name), kv)
 			if err != nil {
-				msg := fmt.Sprintf("Interface %q RNodeMulti config error: %v", name, err)
-				Log(msg, LogWarning)
-				bringupErrors = append(bringupErrors, msg)
-			} else {
-				inheritInterfaceConfig(rnmIf, ifc)
-				ifc = rnmIf
+				return fmt.Errorf("Interface %q RNodeMulti config error: %w", name, err)
 			}
+			inheritInterfaceConfig(rnmIf, ifc)
+			ifc = rnmIf
+		}
+
+		if strings.EqualFold(ifType, "RNodeInterface") {
+			rnIf, err := ifaces.NewRNodeInterfaceFromConfig(strings.TrimSpace(name), kv)
+			if err != nil {
+				return fmt.Errorf("Interface %q RNode config error: %w", name, err)
+			}
+			inheritInterfaceConfig(rnIf, ifc)
+			ifc = rnIf
+		}
+
+		if strings.EqualFold(ifType, "TCPClientInterface") {
+			host := getFirst(kv, "target_host", "remote")
+			port, _ := parseInt(getFirst(kv, "target_port", "port"))
+			kiss := parseTruthy(getFirst(kv, "kiss_framing"), false)
+			i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
+			fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
+			connectTimeoutS, _ := parseFloat(getFirst(kv, "connect_timeout"))
+			reconnectWaitS, _ := parseFloat(getFirst(kv, "reconnect_wait"))
+			var maxReconnect *int
+			if v, ok := parseInt(getFirst(kv, "max_reconnect_tries")); ok {
+				maxReconnect = &v
+			}
+
+			tcpIf, err := ifaces.NewTCPClientInterfaceFromConfig(ifaces.TCPClientConfig{
+				Name:            strings.TrimSpace(name),
+				TargetHost:      host,
+				TargetPort:      port,
+				KISSFraming:     kiss,
+				I2PTunneled:     i2p,
+				FixedMTU:        fixedMTU,
+				ConnectTimeout:  time.Duration(connectTimeoutS * float64(time.Second)),
+				ReconnectWait:   time.Duration(reconnectWaitS * float64(time.Second)),
+				MaxReconnectTry: maxReconnect,
+				IFACSize:        ifc.IFACSize,
+				IFACNetname:     ifc.IFACNetnameVal,
+				IFACNetkey:      ifc.IFACNetkeyVal,
+			})
+			if err != nil {
+				return fmt.Errorf("Interface %q TCP client config error: %w", name, err)
+			}
+			inheritInterfaceConfig(tcpIf, ifc)
+			ifc = tcpIf
+		}
+
+		if strings.EqualFold(ifType, "TCPServerInterface") {
+			listenIP := getFirst(kv, "listen_ip", "listen_on", "bind_ip")
+			listenPort, _ := parseInt(getFirst(kv, "listen_port", "port"))
+			device := getFirst(kv, "device")
+			preferIPv6 := parseTruthy(getFirst(kv, "prefer_ipv6"), false)
+			kiss := parseTruthy(getFirst(kv, "kiss_framing"), false)
+			i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
+			fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
+
+			logger := tcpLogAdapter{}
+			server, err := ifaces.NewTCPServerFromConfig(nil, logger, ifaces.TCPServerConfig{
+				Name:        strings.TrimSpace(name),
+				Device:      device,
+				ListenIP:    listenIP,
+				ListenPort:  listenPort,
+				PreferIPv6:  preferIPv6,
+				KISSFraming: kiss,
+				I2PTunneled: i2p,
+				FixedMTU:    fixedMTU,
+				IFACSize:    ifc.IFACSize,
+				IFACNetname: ifc.IFACNetnameVal,
+				IFACNetkey:  ifc.IFACNetkeyVal,
+			})
+			if err != nil {
+				return fmt.Errorf("Interface %q TCP server config error: %w", name, err)
+			}
+
+			parent := &Interface{
+				Name:              strings.TrimSpace(name),
+				Type:              "TCPServerInterface",
+				IN:                true,
+				OUT:               false,
+				DriverImplemented: true,
+				Online:            true,
+				Bitrate:           server.Bitrate,
+				HWMTU:             server.HWMTU,
+				AutoconfigureMTU:  !server.FixedMTU,
+				FixedMTU:          server.FixedMTU,
+				IFACSize:          server.IFACSize,
+				IFACNetnameVal:    server.IFACNetnameVal,
+				IFACNetkeyVal:     server.IFACNetkeyVal,
+				IFACKey:           append([]byte(nil), server.IFACKey...),
+				IFACIdentity:      server.IFACIdentity,
+				IFACSignature:     append([]byte(nil), server.IFACSignature...),
+			}
+			parent.SetTCPServer(server)
+			parent.SetClientCountFunc(server.Clients)
+
+			// Wrap accepted clients as Interfaces for Transport.
+			server.OnNewClient = func(ci *ifaces.TCPClientInterface) {
+				if ci == nil {
+					return
+				}
+				peer := &Interface{
+					Name:              ci.String(),
+					Type:              "TCPClientInterface",
+					Parent:            parent,
+					IN:                true,
+					OUT:               true,
+					DriverImplemented: true,
+					Online:            true,
+					Bitrate:           parent.Bitrate,
+					HWMTU:             parent.HWMTU,
+					AutoconfigureMTU:  parent.AutoconfigureMTU,
+					FixedMTU:          parent.FixedMTU,
+					IFACSize:          parent.IFACSize,
+					IFACNetnameVal:    parent.IFACNetnameVal,
+					IFACNetkeyVal:     parent.IFACNetkeyVal,
+					IFACKey:           append([]byte(nil), parent.IFACKey...),
+					IFACIdentity:      parent.IFACIdentity,
+					IFACSignature:     append([]byte(nil), parent.IFACSignature...),
+				}
+				peer.SetTCPClient(ci)
+				ci.Owner = tcpOwnerAdapter{ifc: peer}
+				AddInterface(peer)
+			}
+
+			if err := server.Start(); err != nil {
+				return fmt.Errorf("Interface %q TCP server start error: %w", name, err)
+			}
+
+			inheritInterfaceConfig(parent, ifc)
+			ifc = parent
 		}
 
 		r.AddInterface(ifc, mode, bitrate, ifacSize, ifacNetname, ifacNetkey, announceCap, announceRateTarget, announceRateGrace, announceRatePenalty)
@@ -1307,15 +1515,9 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 
 	if broughtUp == 0 {
 		Log("No enabled interfaces could be brought up from config; interface drivers are not ported yet.", LogWarning)
-		if r.PanicOnInterfaceError && len(bringupErrors) > 0 {
-			return errors.New(strings.Join(bringupErrors, "; "))
-		}
 		return nil
 	}
-	Logf(LogDebug, "Configured %d interface placeholder(s) from config", broughtUp)
-	if r.PanicOnInterfaceError && len(bringupErrors) > 0 {
-		return errors.New(strings.Join(bringupErrors, "; "))
-	}
+	Logf(LogDebug, "Configured %d interface(s) from config", broughtUp)
 	return nil
 }
 
@@ -1325,13 +1527,24 @@ func buildInterfaceFromType(name, ifType string) (*Interface, error) {
 		return nil, errors.New("missing interface type")
 	}
 
-	// NOTE: Drivers are not yet ported. We keep type names for config parity,
-	// but report "not implemented" so panic_on_interface_error can behave as in Python.
+	// Keep type names for Python config parity.
 	switch strings.ToLower(ifType) {
 	case "udpinterface":
 		return &Interface{
 			Name:              name,
 			Type:              "UDPInterface",
+			DriverImplemented: true,
+		}, nil
+	case "tcpclientinterface":
+		return &Interface{
+			Name:              name,
+			Type:              "TCPClientInterface",
+			DriverImplemented: true,
+		}, nil
+	case "tcpserverinterface":
+		return &Interface{
+			Name:              name,
+			Type:              "TCPServerInterface",
 			DriverImplemented: true,
 		}, nil
 	case "serialinterface":
@@ -1388,17 +1601,18 @@ func buildInterfaceFromType(name, ifType string) (*Interface, error) {
 			Type:              "RNodeMultiInterface",
 			DriverImplemented: true,
 		}, nil
-	case
-		"tcpinterface",
-		"localinterface",
-		"rnodeinterface",
-		"weaveinterface":
+	case "rnodeinterface":
 		return &Interface{
 			Name:              name,
-			Type:              ifType,
-			DriverImplemented: false,
-			DriverError:       "driver not implemented in Go port",
-		}, errors.New("driver not implemented in Go port")
+			Type:              "RNodeInterface",
+			DriverImplemented: true,
+		}, nil
+	case "weaveinterface":
+		return &Interface{
+			Name:              name,
+			Type:              "WeaveInterface",
+			DriverImplemented: true,
+		}, nil
 	default:
 		return &Interface{
 			Name:              name,
@@ -1533,6 +1747,88 @@ func parseConfigObjInterfaces(path string) (map[string]map[string]string, error)
 	return out, nil
 }
 
+type interfaceConfigEntry struct {
+	Name string
+	KV   map[string]string
+}
+
+func parseConfigObjInterfacesOrdered(path string) ([]interfaceConfigEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(data), "\n")
+
+	inInterfaces := false
+	currentSub := ""
+	currentIdx := -1
+	out := make([]interfaceConfigEntry, 0)
+
+	startInterface := func(name string) {
+		name = strings.TrimSpace(name)
+		currentSub = ""
+		if name == "" {
+			currentIdx = -1
+			return
+		}
+		out = append(out, interfaceConfigEntry{Name: name, KV: map[string]string{}})
+		currentIdx = len(out) - 1
+	}
+
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// Section header: [interfaces]
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") && !strings.HasPrefix(line, "[[") {
+			section := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+			inInterfaces = strings.EqualFold(section, "interfaces")
+			currentSub = ""
+			currentIdx = -1
+			continue
+		}
+
+		if !inInterfaces {
+			continue
+		}
+
+		// Subsection header: [[Name]]
+		if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
+			// Sub-subsection header: [[[Name]]]
+			if strings.HasPrefix(line, "[[[") && strings.HasSuffix(line, "]]]") {
+				sub := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[[["), "]]]"))
+				currentSub = sub
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[["), "]]"))
+			startInterface(name)
+			continue
+		}
+
+		if currentIdx < 0 || currentIdx >= len(out) {
+			// Ignore keys at the [interfaces] level.
+			continue
+		}
+
+		key, val, ok := splitKeyValue(line)
+		if !ok {
+			continue
+		}
+		lkey := strings.ToLower(key)
+		if currentSub != "" {
+			lkey = "sub." + strings.ToLower(currentSub) + "." + lkey
+		}
+		out[currentIdx].KV[lkey] = val
+	}
+
+	return out, nil
+}
+
 func splitKeyValue(line string) (key, value string, ok bool) {
 	parts := strings.SplitN(line, "=", 2)
 	if len(parts) != 2 {
@@ -1658,7 +1954,11 @@ func (r *Reticulum) AddInterface(
 	if ifacSize != nil {
 		ifc.IFACSize = *ifacSize
 	} else {
-		ifc.IFACSize = 8
+		// Python parity: keep the interface-type default IFAC size when unset,
+		// falling back to 8 only if the interface has no default.
+		if ifc.IFACSize == 0 {
+			ifc.IFACSize = 8
+		}
 	}
 
 	ac := float64(ANNOUNCE_CAP) / 100.0
@@ -1712,6 +2012,7 @@ func (r *Reticulum) ShouldPersistData() {
 
 func (r *Reticulum) persistData() {
 	IdentityPersistData()
+	TransportPersistData()
 	r.lastDataPersist = time.Now()
 }
 
@@ -1723,15 +2024,18 @@ func (r *Reticulum) cleanCaches() {
 	entries, _ := os.ReadDir(r.ResourcePath)
 	for _, e := range entries {
 		name := e.Name()
-		if len(name) == (ReticulumTruncatedHashLength/8)*2 {
+		if len(name) == (IdentityHashLength/8)*2 {
 			fp := filepath.Join(r.ResourcePath, name)
 			st, err := os.Stat(fp)
 			if err != nil {
+				Log("Error while cleaning resources cache, the contained exception was: "+err.Error(), LogError)
 				continue
 			}
 			age := now.Sub(st.ModTime())
 			if age > RESOURCE_CACHE*time.Second {
-				_ = os.Remove(fp)
+				if err := os.Remove(fp); err != nil {
+					Log("Error while cleaning resources cache, the contained exception was: "+err.Error(), LogError)
+				}
 			}
 		}
 	}
@@ -1740,15 +2044,18 @@ func (r *Reticulum) cleanCaches() {
 	entries, _ = os.ReadDir(r.CachePath)
 	for _, e := range entries {
 		name := e.Name()
-		if len(name) == (sha256Bits/8)*2 {
+		if len(name) == (IdentityHashLength/8)*2 {
 			fp := filepath.Join(r.CachePath, name)
 			st, err := os.Stat(fp)
 			if err != nil {
+				Log("Error while cleaning packet cache, the contained exception was: "+err.Error(), LogError)
 				continue
 			}
 			age := now.Sub(st.ModTime())
-			if age > time.Hour {
-				_ = os.Remove(fp)
+			if age > DestinationTimeout {
+				if err := os.Remove(fp); err != nil {
+					Log("Error while cleaning packet cache, the contained exception was: "+err.Error(), LogError)
+				}
 			}
 		}
 	}
@@ -1886,30 +2193,23 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		}
 
 		var clients any = nil
-		if strings.HasPrefix(ifc.Name, "Shared Instance[") {
-			clients = 1
-		}
-		if clients == nil {
-			if cc := ifc.ClientCount(); cc != nil {
-				clients = *cc
-			}
+		if cc := ifc.ClientCount(); cc != nil {
+			clients = *cc
 		}
 
 		var parentName any = nil
 		var parentHash any = nil
 		if ifc.Parent != nil {
-			if strings.TrimSpace(ifc.Parent.Name) != "" {
-				parentName = ifc.Parent.Name
-				ph := FullHash([]byte(ifc.Parent.Name))
-				parentHash = ph[:TRUNCATED_HASHLENGTH/8]
+			parentName = ifc.Parent.String()
+			if h := ifc.Parent.GetHash(); len(h) > 0 {
+				parentHash = h
 			}
 		}
 
 		name := ifc.String()
 		ifHash := any(nil)
-		if strings.TrimSpace(name) != "" {
-			h := FullHash([]byte(name))
-			ifHash = h[:TRUNCATED_HASHLENGTH/8]
+		if h := ifc.GetHash(); len(h) > 0 {
+			ifHash = h
 		}
 
 		entry := map[string]any{
@@ -1950,9 +2250,9 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 			"type":                        ifc.Type,
 			"rxb":                         ifc.RXB,
 			"txb":                         ifc.TXB,
-			"incoming_announce_frequency": 0,
-			"outgoing_announce_frequency": 0,
-			"held_announces":              0,
+			"incoming_announce_frequency": ifc.IncomingAnnounceFrequency(),
+			"outgoing_announce_frequency": ifc.OutgoingAnnounceFrequency(),
+			"held_announces":              ifc.HeldAnnouncesCount(),
 			"status":                      ifc.Online,
 			"mode":                        ifc.Mode,
 		}
@@ -1986,6 +2286,41 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		if v := ifc.I2PB32(); v != nil {
 			entry["i2p_b32"] = *v
 		}
+		if v := ifc.I2PTunnelState(); v != nil {
+			entry["tunnelstate"] = *v
+		}
+		if v := ifc.RNodeAirtimeShort(); v != nil {
+			entry["airtime_short"] = *v
+		}
+		if v := ifc.RNodeAirtimeLong(); v != nil {
+			entry["airtime_long"] = *v
+		}
+		if v := ifc.RNodeChannelLoadShort(); v != nil {
+			entry["channel_load_short"] = *v
+		}
+		if v := ifc.RNodeChannelLoadLong(); v != nil {
+			entry["channel_load_long"] = *v
+		}
+		if v := ifc.RNodeNoiseFloor(); v != nil {
+			entry["noise_floor"] = *v
+		}
+		if v := ifc.RNodeInterference(); v != nil {
+			entry["interference"] = *v
+		}
+		if ts, dbm := ifc.RNodeInterferenceLast(); ts != nil && dbm != nil {
+			entry["interference_last_ts"] = *ts
+			entry["interference_last_dbm"] = *dbm
+		}
+		if v := ifc.RNodeCPUTemp(); v != nil {
+			entry["cpu_temp"] = *v
+		}
+		if v := ifc.RNodeBatteryState(); v != nil {
+			entry["battery_state"] = *v
+		}
+		if v := ifc.RNodeBatteryPercent(); v != nil {
+			entry["battery_percent"] = *v
+		}
+		entry["announce_queue"] = ifc.AnnounceQueueCount()
 
 		entries = append(entries, entry)
 	}
@@ -2002,12 +2337,30 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		stats["transport_id"] = nil
 		stats["transport_uptime"] = nil
 	}
-	stats["probe_responder"] = nil
+	if ProbeDestinationEnabled() && ProbeDestination != nil {
+		stats["probe_responder"] = ProbeDestination.Hash()
+	} else {
+		stats["probe_responder"] = nil
+	}
 
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-	stats["rss"] = int64(mem.Alloc)
+	stats["rss"] = processRSSBytes()
 	return stats
+}
+
+func processRSSBytes() any {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return nil
+	}
+	// Linux reports kilobytes, Darwin reports bytes.
+	v := ru.Maxrss
+	if runtime.GOOS == "linux" {
+		v *= 1024
+	}
+	if v <= 0 {
+		return nil
+	}
+	return v
 }
 
 func (r *Reticulum) GetPathTable(maxHops int) []map[string]any {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -602,6 +603,11 @@ type TCPServerInterface struct {
 	mu      sync.Mutex
 	clients []*TCPClientInterface
 
+	// OnNewClient is an optional callback invoked before the spawned client
+	// starts its read loop. It allows the rns package to wrap the connection
+	// as a transport Interface without import cycles.
+	OnNewClient func(ci *TCPClientInterface)
+
 	rxb atomic.Uint64
 	txb atomic.Uint64
 }
@@ -639,10 +645,121 @@ type TCPServerConfig struct {
 	IFACNetkey  string
 }
 
+type TCPClientConfig struct {
+	Name string
+
+	TargetHost string
+	TargetPort int
+	Port       int
+
+	I2PTunneled bool
+	KISSFraming bool
+
+	ReconnectWait   time.Duration
+	MaxReconnectTry *int
+	ConnectTimeout  time.Duration
+
+	FixedMTU int // 0 = default TCP_HW_MTU
+
+	IFACSize    int
+	IFACNetname string
+	IFACNetkey  string
+}
+
+type tcpOwnerFunc func([]byte, *TCPClientInterface)
+
+func (f tcpOwnerFunc) Inbound(data []byte, iface *TCPClientInterface) { f(data, iface) }
+
 // TCPIFACDeriver can be set by the rns package (or callers) to derive IFAC keying
 // material for TCP interfaces, mirroring Python interface-level IFAC behaviour.
 // It returns the IFAC key (64 bytes), the signing identity, plus the interface signature bytes.
 var TCPIFACDeriver func(ifacNetname, ifacNetkey string) (ifacKey []byte, ifacIdentity interface{ Sign([]byte) ([]byte, error) }, ifacSignature []byte, err error)
+
+func NewTCPClientInterfaceFromConfig(cfg TCPClientConfig) (*Interface, error) {
+	if strings.TrimSpace(cfg.Name) == "" {
+		return nil, errors.New("tcp client config missing name")
+	}
+	targetPort := cfg.TargetPort
+	if targetPort == 0 {
+		targetPort = cfg.Port
+	}
+	if targetPort <= 0 || targetPort > 65535 {
+		return nil, fmt.Errorf("invalid target port: %d", targetPort)
+	}
+	if strings.TrimSpace(cfg.TargetHost) == "" {
+		return nil, errors.New("tcp client config missing target_host")
+	}
+
+	ifc := &Interface{
+		Name:              cfg.Name,
+		Type:              "TCPClientInterface",
+		IN:                true,
+		OUT:               true,
+		DriverImplemented: true,
+		Online:            false,
+		Bitrate:           TCP_BITRATE_GUESS,
+		HWMTU:             TCP_HW_MTU,
+		AutoconfigureMTU:  true,
+	}
+	if cfg.FixedMTU > 0 {
+		ifc.HWMTU = cfg.FixedMTU
+		ifc.FixedMTU = true
+		ifc.AutoconfigureMTU = false
+	}
+	if cfg.IFACSize > 0 {
+		ifc.IFACSize = cfg.IFACSize
+	}
+	ifc.IFACNetnameVal = cfg.IFACNetname
+	ifc.IFACNetkeyVal = cfg.IFACNetkey
+
+	owner := tcpOwnerFunc(func(raw []byte, _ *TCPClientInterface) {
+		if len(raw) == 0 {
+			return
+		}
+		atomic.AddUint64(&ifc.RXB, uint64(len(raw)))
+		if InboundHandler != nil {
+			InboundHandler(raw, ifc)
+		}
+	})
+	client := NewTCPClientInitiator(owner, nil, cfg.Name, cfg.TargetHost, targetPort, cfg.KISSFraming, cfg.I2PTunneled)
+	if cfg.ReconnectWait > 0 {
+		client.ReconnectWait = cfg.ReconnectWait
+	}
+	if cfg.ConnectTimeout > 0 {
+		client.ConnectTimeout = cfg.ConnectTimeout
+	}
+	client.MaxReconnectTry = cfg.MaxReconnectTry
+
+	if (ifc.IFACNetnameVal != "" || ifc.IFACNetkeyVal != "") && TCPIFACDeriver != nil {
+		key, id, sig, err := TCPIFACDeriver(ifc.IFACNetnameVal, ifc.IFACNetkeyVal)
+		if err != nil {
+			return nil, err
+		}
+		ifc.IFACKey = key
+		ifc.IFACIdentity = id
+		ifc.IFACSignature = sig
+		client.IFACKey = key
+		client.IFACIdentity = id
+		client.IFACSignature = sig
+	}
+
+	ifc.SetTCPClient(client)
+	ifc.OptimiseMTU()
+
+	go func() {
+		client.InitialConnect(context.Background())
+		t := time.NewTicker(750 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			if ifc.Detached {
+				return
+			}
+			ifc.Online = client.online.Load() && !client.detached.Load()
+		}
+	}()
+
+	return ifc, nil
+}
 
 // NewTCPServerFromConfig mirrors Python TCPServerInterface configuration semantics:
 // - bind can be specified via kernel interface name ("device") or explicit host ("listen_ip")
@@ -770,6 +887,10 @@ func (s *TCPServerInterface) acceptLoop() {
 
 		ra := c.RemoteAddr().(*net.TCPAddr)
 		iface := s.spawnClient(c, ra)
+
+		if s.OnNewClient != nil {
+			s.OnNewClient(iface)
+		}
 
 		s.mu.Lock()
 		s.clients = append(s.clients, iface)

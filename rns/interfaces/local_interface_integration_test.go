@@ -4,6 +4,7 @@ import (
 	"net"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,9 @@ func startLocalTestServer(t *testing.T) (ln net.Listener, cfg LocalConfig, spawn
 	var err error
 	ln, err = StartLocalInterfaceServer(cfg, func(ifc *Interface) { spawnCh <- ifc })
 	if err != nil {
+		if strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("LocalInterface bind not permitted in sandbox: %v", err)
+		}
 		t.Fatalf("StartLocalInterfaceServer: %v", err)
 	}
 

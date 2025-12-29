@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"crypto/sha256"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -233,7 +234,24 @@ type Interface struct {
 	serial         *SerialDriver
 	rnodeMulti     *RNodeMultiDriver
 	rnodeSub       *RNodeSubDriver
+	rnodeSingle    *RNodeInterface
+	tcpClient      *TCPClientInterface
+	tcpServer      *TCPServerInterface
 	clientCount    func() int
+}
+
+func (i *Interface) SetTCPClient(ci *TCPClientInterface) {
+	if i == nil {
+		return
+	}
+	i.tcpClient = ci
+}
+
+func (i *Interface) SetTCPServer(s *TCPServerInterface) {
+	if i == nil {
+		return
+	}
+	i.tcpServer = s
 }
 
 type heldAnnounce struct {
@@ -336,6 +354,15 @@ func (i *Interface) Detach() {
 		if i.rnodeMulti != nil {
 			i.rnodeMulti.Close()
 		}
+		if i.rnodeSingle != nil {
+			_ = i.rnodeSingle.Stop()
+		}
+		if i.tcpClient != nil {
+			i.tcpClient.Detach()
+		}
+		if i.tcpServer != nil {
+			i.tcpServer.Detach()
+		}
 	}
 }
 
@@ -390,6 +417,179 @@ func (i *Interface) I2PB32() *string {
 		return &s
 	}
 	return nil
+}
+
+func (i *Interface) I2PTunnelState() *string {
+	if i == nil || !strings.EqualFold(i.Type, "I2PInterfacePeer") || i.i2pPeer == nil {
+		return nil
+	}
+	switch i.i2pPeer.tunnelState.Load() {
+	case i2pTunnelStateAlive:
+		s := "Tunnel Active"
+		return &s
+	case i2pTunnelStateInit:
+		s := "Creating Tunnel"
+		return &s
+	case i2pTunnelStateStale:
+		s := "Tunnel Unresponsive"
+		return &s
+	default:
+		s := "Unknown State"
+		return &s
+	}
+}
+
+func (i *Interface) RNodeAirtimeShort() *float64 {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		v := float64(i.rnodeSingle.rAirtimeShort)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		v := float64(math.Float32frombits(i.rnodeMulti.rAirtimeShortBits.Load()))
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeAirtimeLong() *float64 {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		v := float64(i.rnodeSingle.rAirtimeLong)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		v := float64(math.Float32frombits(i.rnodeMulti.rAirtimeLongBits.Load()))
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeChannelLoadShort() *float64 {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		v := float64(i.rnodeSingle.rChannelLoadShort)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		v := float64(math.Float32frombits(i.rnodeMulti.rChannelLoadShortBits.Load()))
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeChannelLoadLong() *float64 {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		v := float64(i.rnodeSingle.rChannelLoadLong)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		v := float64(math.Float32frombits(i.rnodeMulti.rChannelLoadLongBits.Load()))
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeNoiseFloor() *int {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		if i.rnodeSingle.rNoiseFloor == 0 {
+			return nil
+		}
+		v := int(i.rnodeSingle.rNoiseFloor)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		nf := i.rnodeMulti.rNoiseFloor.Load()
+		if nf == 0 {
+			return nil
+		}
+		v := int(nf)
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeInterference() *int {
+	if i == nil {
+		return nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		if i.rnodeSingle.rInterference == nil {
+			return nil
+		}
+		v := int(*i.rnodeSingle.rInterference)
+		return &v
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		vv := i.rnodeMulti.rInterference.Load()
+		if vv == math.MinInt32 {
+			return nil
+		}
+		v := int(vv)
+		return &v
+	}
+	return nil
+}
+
+func (i *Interface) RNodeInterferenceLast() (ts *float64, dbm *int) {
+	if i == nil {
+		return nil, nil
+	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		if i.rnodeSingle.rInterference == nil || i.rnodeSingle.rInterferenceAt.IsZero() {
+			return nil, nil
+		}
+		dbmVal := int(*i.rnodeSingle.rInterference)
+		tsVal := float64(i.rnodeSingle.rInterferenceAt.Unix())
+		return &tsVal, &dbmVal
+	}
+	if strings.EqualFold(i.Type, "RNodeMultiInterface") && i.rnodeMulti != nil {
+		vv := i.rnodeMulti.rInterference.Load()
+		tsUnix := i.rnodeMulti.rInterferenceAtUnixSec.Load()
+		if vv == math.MinInt32 || tsUnix <= 0 {
+			return nil, nil
+		}
+		dbmVal := int(vv)
+		tsVal := float64(tsUnix)
+		return &tsVal, &dbmVal
+	}
+	return nil, nil
+}
+
+func (i *Interface) RNodeBatteryState() *string {
+	if i == nil || !strings.EqualFold(i.Type, "RNodeInterface") || i.rnodeSingle == nil {
+		return nil
+	}
+	s := i.rnodeSingle.BatteryStateString()
+	return &s
+}
+
+func (i *Interface) RNodeBatteryPercent() *int {
+	if i == nil || !strings.EqualFold(i.Type, "RNodeInterface") || i.rnodeSingle == nil {
+		return nil
+	}
+	v := int(i.rnodeSingle.batteryPercent)
+	return &v
+}
+
+func (i *Interface) RNodeCPUTemp() *int {
+	if i == nil || !strings.EqualFold(i.Type, "RNodeInterface") || i.rnodeSingle == nil || i.rnodeSingle.temperatureC == nil {
+		return nil
+	}
+	v := int(*i.rnodeSingle.temperatureC)
+	return &v
 }
 
 func (i *Interface) SetClientCountFunc(fn func() int) {
@@ -710,6 +910,11 @@ func (i *Interface) ProcessOutgoing(data []byte) {
 		i.serial.ProcessOutgoing(data)
 		return
 	}
+	if strings.EqualFold(i.Type, "RNodeInterface") && i.rnodeSingle != nil {
+		_ = i.rnodeSingle.SendData(data)
+		atomic.AddUint64(&i.TXB, uint64(len(data)))
+		return
+	}
 	if strings.EqualFold(i.Type, "RNodeSubInterface") {
 		if i.Parent != nil && i.Parent.rnodeMulti != nil {
 			i.Parent.rnodeMulti.ProcessOutgoing(i, data)
@@ -726,6 +931,16 @@ func (i *Interface) ProcessOutgoing(data []byte) {
 		if i.Parent != nil && i.Parent.weave != nil {
 			i.Parent.weave.ProcessOutgoing(i, data)
 		}
+		return
+	}
+	if strings.EqualFold(i.Type, "TCPClientInterface") && i.tcpClient != nil {
+		if err := i.tcpClient.ProcessOutgoing(data); err != nil {
+			if DiagLogf != nil {
+				DiagLogf(LogError, "TCP send error on %s: %v", i, err)
+			}
+			return
+		}
+		atomic.AddUint64(&i.TXB, uint64(len(data)))
 		return
 	}
 }
@@ -1121,6 +1336,24 @@ func (i *Interface) AnnounceAllowedAt() time.Time {
 	i.icMu.Lock()
 	defer i.icMu.Unlock()
 	return i.announceAllowedAt
+}
+
+func (i *Interface) HeldAnnouncesCount() int {
+	if i == nil {
+		return 0
+	}
+	i.icMu.Lock()
+	defer i.icMu.Unlock()
+	return len(i.heldAnnounces)
+}
+
+func (i *Interface) AnnounceQueueCount() int {
+	if i == nil {
+		return 0
+	}
+	i.icMu.Lock()
+	defer i.icMu.Unlock()
+	return len(i.announceQueue)
 }
 
 func (i *Interface) SetAnnounceAllowedAt(t time.Time) {

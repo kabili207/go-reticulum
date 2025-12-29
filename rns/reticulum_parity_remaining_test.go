@@ -1,0 +1,99 @@
+package rns
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	configobj "github.com/svanichkin/configobj"
+)
+
+func TestBringUpSystemInterfaces_ModeAndBitrateAliases(t *testing.T) {
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "config")
+	cfg := `
+[interfaces]
+  [[Alias]]
+    enabled = True
+    type = WeaveInterface
+    port = fake
+    selected_interface_mode = gateway
+    configured_bitrate = 12345
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+	parsed, err := configobj.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("configobj.Load: %v", err)
+	}
+
+	prevInterfaces := Interfaces
+	Interfaces = nil
+	t.Cleanup(func() {
+		for _, ifc := range Interfaces {
+			if ifc != nil {
+				ifc.Detach()
+			}
+		}
+		Interfaces = prevInterfaces
+	})
+
+	r := &Reticulum{
+		Config:                parsed,
+		ConfigPath:            cfgPath,
+		PanicOnInterfaceError: false,
+	}
+	if err := r.bringUpSystemInterfaces(); err != nil {
+		t.Fatalf("bringUpSystemInterfaces: %v", err)
+	}
+	if len(Interfaces) != 1 {
+		t.Fatalf("expected 1 interface, got %d", len(Interfaces))
+	}
+	ifc := Interfaces[0]
+	if ifc == nil {
+		t.Fatalf("expected non-nil interface")
+	}
+	if ifc.Mode != InterfaceModeGateway {
+		t.Fatalf("expected mode=%d got %d", InterfaceModeGateway, ifc.Mode)
+	}
+	if ifc.Bitrate != 12345 {
+		t.Fatalf("expected bitrate=12345 got %d", ifc.Bitrate)
+	}
+}
+
+func TestBringUpSystemInterfaces_ExternalInterfacePyUnsupported(t *testing.T) {
+	cfgDir := t.TempDir()
+	ifDir := filepath.Join(cfgDir, "interfaces")
+	if err := os.MkdirAll(ifDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ifDir, "FooInterface.py"), []byte("# placeholder"), 0o600); err != nil {
+		t.Fatalf("WriteFile(interface): %v", err)
+	}
+
+	cfgPath := filepath.Join(cfgDir, "config")
+	cfg := `
+[interfaces]
+  [[Foo]]
+    enabled = True
+    type = FooInterface
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+	parsed, err := configobj.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("configobj.Load: %v", err)
+	}
+
+	r := &Reticulum{
+		Config:                parsed,
+		ConfigPath:            cfgPath,
+		InterfacePath:         ifDir,
+		PanicOnInterfaceError: true,
+	}
+	if err := r.bringUpSystemInterfaces(); err == nil {
+		t.Fatalf("expected error for unsupported external Python interface")
+	}
+}
