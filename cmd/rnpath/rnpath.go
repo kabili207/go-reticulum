@@ -754,7 +754,6 @@ func handleDiscover(destinationHex string, timeout float64, noOutput bool) error
 	}
 
 	if rns.TransportHasPath(destHash) {
-		hops := rns.TransportHopsTo(destHash)
 		nextHopBytes := reticulum.GetNextHop(destHash)
 		if nextHopBytes == nil {
 			fmt.Print("\r                                                       \r")
@@ -762,7 +761,19 @@ func handleDiscover(destinationHex string, timeout float64, noOutput bool) error
 			return exitError{code: 1, msg: ""}
 		}
 		nextHop := rns.PrettyHex(nextHopBytes)
+		hops := rns.TransportHopsTo(destHash)
 		ifName := reticulum.GetNextHopIfName(destHash)
+
+		// The path entry can become visible before hop count is finalised.
+		// Wait briefly for a stable hop count unless this is clearly a local-client route.
+		if hops == 0 && ifName != "" && ifName != "None" && !strings.HasPrefix(ifName, "LocalInterface") {
+			stableDeadline := time.Now().Add(750 * time.Millisecond)
+			for hops == 0 && time.Now().Before(stableDeadline) {
+				time.Sleep(50 * time.Millisecond)
+				hops = rns.TransportHopsTo(destHash)
+			}
+		}
+
 		ms := ""
 		if hops != 1 {
 			ms = "s"

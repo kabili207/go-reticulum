@@ -50,7 +50,9 @@ var (
 
 func main() {
 	var (
+		helpFlag      = flag.Bool("h", false, "show this help message and exit")
 		configDir     = flag.String("config", "", "path to alternative Reticulum config directory")
+		identityPath  = flag.String("i", "", "path to identity to use")
 		silent        = flag.Bool("S", false, "disable transfer progress output")
 		listenMode    = flag.Bool("l", false, "listen for incoming transfer requests")
 		noCompress    = flag.Bool("C", false, "disable automatic compression")
@@ -78,6 +80,7 @@ func main() {
 	flag.Var(&quietCnt, "quiet", "decrease verbosity")
 
 	// Long option aliases for parity with Python.
+	flag.BoolVar(helpFlag, "help", *helpFlag, "show this help message and exit")
 	flag.BoolVar(silent, "silent", *silent, "disable transfer progress output")
 	flag.BoolVar(listenMode, "listen", *listenMode, "listen for incoming transfer requests")
 	flag.BoolVar(noCompress, "no-compress", *noCompress, "disable automatic compression")
@@ -89,6 +92,7 @@ func main() {
 	flag.BoolVar(noAuth, "no-auth", *noAuth, "accept requests from anyone")
 	flag.BoolVar(printIdentity, "print-identity", *printIdentity, "print identity and destination info and exit")
 	flag.BoolVar(phyRates, "phy-rates", *phyRates, "display physical layer transfer rates")
+	flag.StringVar(identityPath, "identity", *identityPath, "path to identity to use")
 
 	// NOTE: Python rncp.py keeps --limit commented out; keep parity by not exposing it.
 	// flag.IntVar(&limitValue, "limit", -1, "maximum number of files to accept before exiting")
@@ -97,8 +101,14 @@ func main() {
 	var allowed multiString
 	flag.Var(&allowed, "a", "allow this identity (or add in ~/.rncp/allowed_identities)")
 
+	flag.Usage = printUsage
 	flag.CommandLine.Parse(expandCountFlags(os.Args[1:]))
 	args := flag.Args()
+
+	if *helpFlag {
+		printUsage()
+		return
+	}
 
 	if *versionFlag {
 		fmt.Printf("rncp %s\n", rns.GetVersion())
@@ -112,8 +122,11 @@ func main() {
 	allowOverwriteOnReceive = *overwrite
 
 	if *listenMode || *printIdentity {
-		err := listen(*configDir, verboseCnt.Value(), quietCnt.Value(), allowed, *printIdentity, &limitValue, *noAuth, *allowFetchFlg, *noCompress, *jail, *save, *announce, *overwrite)
+		err := listen(*configDir, *identityPath, verboseCnt.Value(), quietCnt.Value(), allowed, *printIdentity, &limitValue, *noAuth, *allowFetchFlg, *noCompress, *jail, *save, *announce, *overwrite)
 		if err != nil {
+			if ee, ok := asExitError(err); ok {
+				os.Exit(ee.code)
+			}
 			fmt.Println("listen error:", err)
 			os.Exit(1)
 		}
@@ -129,11 +142,17 @@ func main() {
 	dest := args[1]
 
 	if *fetchMode {
-		if err := fetch(*configDir, verboseCnt.Value(), quietCnt.Value(), dest, file, *timeout, *silent, *phyRates, *save, *overwrite); err != nil {
+		if err := fetch(*configDir, *identityPath, verboseCnt.Value(), quietCnt.Value(), dest, file, *timeout, *silent, *phyRates, *save, *overwrite); err != nil {
+			if ee, ok := asExitError(err); ok {
+				os.Exit(ee.code)
+			}
 			os.Exit(1)
 		}
 	} else {
-		if err := send(*configDir, verboseCnt.Value(), quietCnt.Value(), dest, file, *timeout, *silent, *phyRates, *noCompress); err != nil {
+		if err := send(*configDir, *identityPath, verboseCnt.Value(), quietCnt.Value(), dest, file, *timeout, *silent, *phyRates, *noCompress); err != nil {
+			if ee, ok := asExitError(err); ok {
+				os.Exit(ee.code)
+			}
 			os.Exit(1)
 		}
 	}
@@ -189,9 +208,29 @@ func allSameRune(s string, r rune) bool {
 	return s != ""
 }
 
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e exitError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("exit %d", e.code)
+	}
+	return e.err.Error()
+}
+
+func asExitError(err error) (exitError, bool) {
+	var ee exitError
+	if errors.As(err, &ee) {
+		return ee, true
+	}
+	return exitError{}, false
+}
+
 // ----- listen -----
 
-func listen(configdir string, verbosity, quietness int, allowed multiString, displayIdentity bool,
+func listen(configdir, identityPath string, verbosity, quietness int, allowed multiString, displayIdentity bool,
 	limit *int, disableAuth, fetchAllowed, noCompress bool,
 	jail, save string, announce int, allowOverwrite bool) error {
 
@@ -230,23 +269,9 @@ func listen(configdir string, verbosity, quietness int, allowed multiString, dis
 		rns.Logf(rns.LogVerbose, "Saving received files in %q", savePath)
 	}
 
-	idPath := filepath.Join(ret.IdentityPath, appName)
-	var identity *rns.Identity
-	if fileExists(idPath) {
-		if loaded, err := rns.IdentityFromFile(idPath); err == nil {
-			identity = loaded
-		} else {
-			rns.Logf(rns.LogError, "Could not load identity for rncp: %v", err)
-		}
-	}
-	if identity == nil {
-		rns.Log("No valid saved identity found, creating new...", rns.LogInfo)
-		newIdentity, err := rns.NewIdentity()
-		if err != nil {
-			return err
-		}
-		identity = newIdentity
-		_ = identity.Save(idPath)
+	identity, err := loadOrCreateIdentity(ret.IdentityPath, identityPath)
+	if err != nil {
+		return err
 	}
 
 	dest, err := rns.NewDestination(identity, rns.DestinationIN, rns.DestinationSINGLE, appName, "receive")
@@ -255,7 +280,7 @@ func listen(configdir string, verbosity, quietness int, allowed multiString, dis
 	}
 
 	if displayIdentity {
-		fmt.Println("Identity     :", identity.String())
+		fmt.Println("Identity     :", rns.PrettyHex(identity.Hash))
 		fmt.Println("Listening on :", rns.PrettyHex(dest.Hash()))
 		os.Exit(0)
 	}
@@ -471,7 +496,7 @@ func receiveResourceConcluded(res *rns.Resource) {
 
 // ----- send / fetch -----
 
-func send(configdir string, verbosity, quietness int, destination, file string,
+func send(configdir, identityPath string, verbosity, quietness int, destination, file string,
 	timeout float64, silent, phyRates, noCompress bool) error {
 	resetTransferState()
 
@@ -498,7 +523,7 @@ func send(configdir string, verbosity, quietness int, destination, file string,
 		return err
 	}
 
-	identity, err := loadOrCreateIdentity(ret.IdentityPath)
+	identity, err := loadOrCreateIdentity(ret.IdentityPath, identityPath)
 	if err != nil {
 		return err
 	}
@@ -541,6 +566,19 @@ func send(configdir string, verbosity, quietness int, destination, file string,
 
 	receiverID := rns.IdentityRecall(destHash)
 	if receiverID == nil {
+		// Python's rncp assumes that once a path exists the destination identity is also known.
+		// In practice, identity propagation can lag path discovery slightly, so wait briefly.
+		for receiverID == nil && time.Now().Before(estabTimeout) {
+			time.Sleep(50 * time.Millisecond)
+			receiverID = rns.IdentityRecall(destHash)
+		}
+	}
+	if receiverID == nil {
+		if silent {
+			fmt.Println("Could not recall identity for " + rns.PrettyHex(destHash))
+		} else {
+			fmt.Print(eraseStr + "Could not recall identity for " + rns.PrettyHex(destHash) + "\n")
+		}
 		return errors.New("receiver identity not known")
 	}
 	receiverDest, err := rns.NewDestination(receiverID, rns.DestinationOUT, rns.DestinationSINGLE, appName, "receive")
@@ -661,7 +699,7 @@ func send(configdir string, verbosity, quietness int, destination, file string,
 	return nil
 }
 
-func fetch(configdir string, verbosity, quietness int,
+func fetch(configdir, identityPath string, verbosity, quietness int,
 	destination, file string, timeout float64, silent, phyRates bool, save string, overwrite bool) error {
 	resetTransferState()
 
@@ -693,7 +731,7 @@ func fetch(configdir string, verbosity, quietness int,
 		return err
 	}
 
-	identity, err := loadOrCreateIdentity(ret.IdentityPath)
+	identity, err := loadOrCreateIdentity(ret.IdentityPath, identityPath)
 	if err != nil {
 		return err
 	}
@@ -736,6 +774,18 @@ func fetch(configdir string, verbosity, quietness int,
 
 	listenerID := rns.IdentityRecall(destHash)
 	if listenerID == nil {
+		// See send(): identity may not be immediately available after path discovery.
+		for listenerID == nil && time.Now().Before(estabTimeout) {
+			time.Sleep(50 * time.Millisecond)
+			listenerID = rns.IdentityRecall(destHash)
+		}
+	}
+	if listenerID == nil {
+		if silent {
+			fmt.Println("Could not recall identity for " + rns.PrettyHex(destHash))
+		} else {
+			fmt.Print(eraseStr + "Could not recall identity for " + rns.PrettyHex(destHash) + "\n")
+		}
 		return errors.New("receiver identity not known")
 	}
 	listenerDest, err := rns.NewDestination(listenerID, rns.DestinationOUT, rns.DestinationSINGLE, appName, "receive")
@@ -826,22 +876,22 @@ func fetch(configdir string, verbosity, quietness int,
 			return
 		}
 
-			nameBytes, ok := meta["name"]
-			if !ok {
-				fmt.Println("Invalid metadata, ignoring resource")
-				return
-			}
-			var name string
-			switch v := nameBytes.(type) {
-			case string:
-				name = v
-			case []byte:
-				name = string(v)
-			default:
-				fmt.Println("Invalid metadata name field, ignoring resource")
-				return
-			}
-			filename := filepath.Base(name)
+		nameBytes, ok := meta["name"]
+		if !ok {
+			fmt.Println("Invalid metadata, ignoring resource")
+			return
+		}
+		var name string
+		switch v := nameBytes.(type) {
+		case string:
+			name = v
+		case []byte:
+			name = string(v)
+		default:
+			fmt.Println("Invalid metadata name field, ignoring resource")
+			return
+		}
+		filename := filepath.Base(name)
 
 		var savedFilename string
 		if savePath != "" {
@@ -1104,11 +1154,11 @@ func loadAllowedIdentities(allowed multiString) error {
 
 	for _, a := range allowed {
 		if len(a) != destLen {
-			return fmt.Errorf("allowed destination length is invalid, must be %d hexadecimal characters (%d bytes)", destLen, destLen/2)
+			return fmt.Errorf("Allowed destination length is invalid, must be %d hexadecimal characters (%d bytes).", destLen, destLen/2)
 		}
 		b, err := hexDecode(a)
 		if err != nil {
-			return fmt.Errorf("invalid destination entered: %w", err)
+			return fmt.Errorf("Invalid destination entered. Check your input.")
 		}
 		allowedIdentityHashes = append(allowedIdentityHashes, b)
 	}
@@ -1118,27 +1168,33 @@ func loadAllowedIdentities(allowed multiString) error {
 func parseDest(dest string) ([]byte, error) {
 	destLen := (rns.ReticulumTruncatedHashLength / 8) * 2
 	if len(dest) != destLen {
-		return nil, fmt.Errorf("Allowed destination length is invalid, must be %d hexadecimal characters (%d bytes)", destLen, destLen/2)
+		return nil, fmt.Errorf("Allowed destination length is invalid, must be %d hexadecimal characters (%d bytes).", destLen, destLen/2)
 	}
-	return hexDecode(dest)
+	b, err := hexDecode(dest)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid destination entered. Check your input.")
+	}
+	return b, nil
 }
 
-func loadOrCreateIdentity(identityPathRoot string) (*rns.Identity, error) {
-	idPath := filepath.Join(identityPathRoot, appName)
+func loadOrCreateIdentity(identityPathRoot, identityPath string) (*rns.Identity, error) {
+	idPath := resolveIdentityPath(identityPathRoot, identityPath)
 	if fileExists(idPath) {
 		id, err := rns.IdentityFromFile(idPath)
 		if err == nil {
 			return id, nil
 		}
-		rns.Logf(rns.LogError, "Could not load identity for rncp. The identity file \"%s\" may be corrupt or unreadable: %v", idPath, err)
-		return nil, errors.New("identity error")
+		rns.Logf(rns.LogError, "Could not load identity for rncp. The identity file at %q may be corrupt or unreadable.", idPath)
+		return nil, exitError{code: 2, err: errors.New("identity error")}
 	}
 	rns.Log("No valid saved identity found, creating new...", rns.LogInfo)
 	id, err := rns.NewIdentity()
 	if err != nil {
 		return nil, err
 	}
-	_ = id.Save(idPath)
+	if err := id.Save(idPath); err != nil {
+		return nil, err
+	}
 	return id, nil
 }
 
@@ -1163,6 +1219,16 @@ func setupSignals() {
 			rns.Exit(0)
 		}
 	}()
+}
+
+func resolveIdentityPath(identityPathRoot, identityPath string) string {
+	// Match Python rncp semantics:
+	// - If no identity is specified, default to <identitypath>/<APP_NAME>.
+	// - If specified, use it as-is (with "~" expansion), without forcing absolute paths.
+	if identityPath == "" {
+		return filepath.Join(identityPathRoot, appName)
+	}
+	return expandPath(identityPath)
 }
 
 func absPath(p string) string {
@@ -1276,6 +1342,7 @@ func sizeStr(num int64, suffix rune) string {
 
 func printUsage() {
 	fmt.Println("")
+	fmt.Println("Reticulum File Transfer Utility")
 	fmt.Println("Usage:")
 	fmt.Println("  rncp [options] file destination")
 	fmt.Println("  rncp --listen [options]")

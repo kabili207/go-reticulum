@@ -31,7 +31,8 @@ const (
 	linkKeepaliveMin       = 5 * time.Second
 	linkStaleFactor        = 2
 	linkWatchdogMaxSleep   = 5 * time.Second
-	linkDefaultMode        = LinkModeAES256CBC
+	// Python parity: default link mode is AES_128_CBC (0x00).
+	linkDefaultMode        = LinkModeAES128CBC
 	linkDefaultPerHop      = time.Duration(DEFAULT_PER_HOP_TIMEOUT) * time.Second
 )
 
@@ -67,7 +68,8 @@ const (
 )
 
 var (
-	linkEnabledModes     = []int{LinkModeAES256CBC}
+	// Python supports AES_128_CBC and AES_256_CBC; keep both enabled for parity.
+	linkEnabledModes     = []int{LinkModeAES128CBC, LinkModeAES256CBC}
 	linkModeDescriptions = map[int]string{
 		LinkModeAES128CBC: "AES_128_CBC",
 		LinkModeAES256CBC: "AES_256_CBC",

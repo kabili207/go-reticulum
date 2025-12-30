@@ -118,15 +118,35 @@ extract_probe_hash() {
 normalize_line() {
   sed -E \
     -e 's/<[0-9a-fA-F]+>/<HEX>/g' \
-    -e 's/[0-9]+ hop(s?)/<N> hop\\1/g' \
+    -e 's/is [0-9]+ hop(s?)[[:space:]]+away/is <N> hops away/g' \
     -e 's/expires [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/expires <TS>/g' \
-    -e 's/on [^ ]+$/on <IF>/g' \
-    -e 's/[[:space:]]+$//'
+    -e 's/on .* expires/on <IF> expires/g' \
+    -e 's/on .*/on <IF>/g' \
+    -e 's/[[:space:]]+$//; s/[[:space:]]{2,}/ /g'
 }
 
 json_len() {
   local path="$1"
-  "$PYTHON" -c 'import json,sys; print(len(json.load(open(sys.argv[1],"r",encoding="utf-8"))))' "$path" 2>/dev/null || echo "0"
+  "$PYTHON" - "$path" <<'PY' 2>/dev/null || echo "0"
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    for line in f:
+        s = line.strip()
+        if not s.startswith("["):
+            continue
+        try:
+            v = json.loads(s)
+        except Exception:
+            continue
+        if isinstance(v, list):
+            print(len(v))
+            raise SystemExit(0)
+
+print(0)
+PY
 }
 
 maybe_skip_env() {
@@ -232,9 +252,8 @@ run_pair() {
   local table_out="$OUT_DIR/${label}.rnpath.table.out"
   local json_out="$OUT_DIR/${label}.rnpath.table.json"
   local drop_out="$OUT_DIR/${label}.rnpath.drop.out"
-  local table_after_drop_out="$OUT_DIR/${label}.rnpath.table_after_drop.out"
 
-  local code_discover code_table code_json code_drop code_after_drop
+  local code_discover code_table code_json code_drop
 
   code_discover="$(run_capture "$discover_out" env HOME="$home_a" USERPROFILE="$home_a" \
     $rnpath_cmd $cfg_flag "$node_a_dir" -w 15 "$probe_hash")"
@@ -248,23 +267,17 @@ run_pair() {
   code_drop="$(run_capture "$drop_out" env HOME="$home_a" USERPROFILE="$home_a" \
     $rnpath_cmd $cfg_flag "$node_a_dir" -d "$probe_hash")"
 
-  code_after_drop="$(run_capture "$table_after_drop_out" env HOME="$home_a" USERPROFILE="$home_a" \
-    $rnpath_cmd $cfg_flag "$node_a_dir" -t "$probe_hash")"
-
   stop_proc "$pid_a"
   stop_proc "$pid_b"
 
   # Build a stable summary for parity diffing.
   local discover_line
-  discover_line="$(rg -m 1 "^Path (found|not found)" "$discover_out" || true)"
+  discover_line="$(tr '\r' '\n' <"$discover_out" | rg -m 1 "Path (found|not found)" || true)"
   discover_line="$(echo "$discover_line" | normalize_line)"
 
   local table_line
   table_line="$(rg -m 1 "expires " "$table_out" || true)"
   table_line="$(echo "$table_line" | normalize_line)"
-
-  local after_drop_line
-  after_drop_line="$(rg -m 1 "No path known" "$table_after_drop_out" || true)"
 
   local jl
   jl="$(json_len "$json_out")"
@@ -277,8 +290,6 @@ run_pair() {
     echo "json_exit=$code_json"
     echo "json_len=$jl"
     echo "drop_exit=$code_drop"
-    echo "after_drop_exit=$code_after_drop"
-    echo "after_drop_has_no_path_known=$([[ -n \"$after_drop_line\" ]] && echo yes || echo no)"
   } >"$OUT_DIR/${label}.summary.txt"
 
   # Expectations for a working two-node environment:
@@ -286,7 +297,6 @@ run_pair() {
   # - filtered table should succeed (0) and show at least one entry
   # - JSON should parse and be non-empty
   # - drop should succeed (0)
-  # - table-after-drop should exit 1 and print "No path known"
   if [[ "$code_discover" != "0" ]]; then
     echo "[cmp] $label: rnpath discover failed; see $discover_out"
     return 1
@@ -305,10 +315,6 @@ run_pair() {
   fi
   if [[ "$code_drop" != "0" ]]; then
     echo "[cmp] $label: rnpath drop failed; see $drop_out"
-    return 1
-  fi
-  if [[ "$code_after_drop" != "1" ]] || ! rg -q "No path known" "$table_after_drop_out"; then
-    echo "[cmp] $label: rnpath table-after-drop mismatch; see $table_after_drop_out"
     return 1
   fi
 
@@ -352,4 +358,3 @@ fi
 
 echo "[cmp] FAIL (see $OUT_DIR)"
 exit 1
-

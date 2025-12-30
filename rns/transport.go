@@ -49,20 +49,20 @@ const (
 	MaxReceipts                 = 1024
 	TransportPathRequestTimeout = 15.0
 	// DestinationTimeout mirrors Python Transport.DESTINATION_TIMEOUT.
-	DestinationTimeout = 7 * 24 * time.Hour
-	packetCacheMaxEntries       = 512
-	PathfinderMaxHops           = 128
-	pathfinderRetryLimit        = 1
-	pathfinderRetryGrace        = 5 * time.Second
-	pathfinderRandomWindow      = 500 * time.Millisecond
-	localRebroadcastsMax        = 2
-	pathRequestGrace            = 400 * time.Millisecond
-	pathRequestRoamingGrace     = 1500 * time.Millisecond
-	apPathTime                  = 24 * time.Hour
-	roamingPathTime             = 6 * time.Hour
-	maxRandomBlobs              = 64
-	persistRandomBlobs          = 32
-	maxRateTimestamps           = 16
+	DestinationTimeout      = 7 * 24 * time.Hour
+	packetCacheMaxEntries   = 512
+	PathfinderMaxHops       = 128
+	pathfinderRetryLimit    = 1
+	pathfinderRetryGrace    = 5 * time.Second
+	pathfinderRandomWindow  = 500 * time.Millisecond
+	localRebroadcastsMax    = 2
+	pathRequestGrace        = 400 * time.Millisecond
+	pathRequestRoamingGrace = 1500 * time.Millisecond
+	apPathTime              = 24 * time.Hour
+	roamingPathTime         = 6 * time.Hour
+	maxRandomBlobs          = 64
+	persistRandomBlobs      = 32
+	maxRateTimestamps       = 16
 )
 
 var (
@@ -1024,17 +1024,17 @@ func saveDestinationTable() error {
 			}
 		}
 
-			entries = append(entries, []any{
-				dst,
-				float64(entry.Timestamp.Unix()),
-				append([]byte(nil), entry.NextHop...),
-				entry.Hops,
-				float64(entry.ExpiresAt.Unix()),
-				dedupeAndTailRandomBlobs(entry.RandomBlobs, persistRandomBlobs),
-				ifHash,
-				append([]byte(nil), entry.PacketHash...),
-			})
-		}
+		entries = append(entries, []any{
+			dst,
+			float64(entry.Timestamp.Unix()),
+			append([]byte(nil), entry.NextHop...),
+			entry.Hops,
+			float64(entry.ExpiresAt.Unix()),
+			dedupeAndTailRandomBlobs(entry.RandomBlobs, persistRandomBlobs),
+			ifHash,
+			append([]byte(nil), entry.PacketHash...),
+		})
+	}
 	pathTableMu.RUnlock()
 
 	buf, err := umsgpack.Packb(entries)
@@ -2401,7 +2401,7 @@ func Transmit(ifc *Interface, raw []byte) {
 			return
 		}
 
-			// new header with IFAC flag
+		// new header with IFAC flag
 		newHeader := []byte{raw[0] | 0x80, raw[1]}
 		newRaw := append(newHeader, ifac...)
 		newRaw = append(newRaw, raw[2:]...)
@@ -2488,8 +2488,12 @@ func Outbound(p *Packet) bool {
 			hops := entry.Hops
 
 			connectedShared := Owner != nil && Owner.IsConnectedToSharedInstance
-			if hops > 1 || (hops == 1 && connectedShared) {
-					// add transport header (HEADER_2 + next hop id)
+			// When connected to a shared instance, always send header1 packets to the
+			// shared instance and let it apply transport routing and headers. If the
+			// local client wraps packets in header2, the shared instance can reject
+			// them if the transport ID does not match.
+			if hops > 1 && !connectedShared {
+				// add transport header (HEADER_2 + next hop id)
 				if p.HeaderType == Header1 {
 					flags := byte(Header2)<<6 |
 						byte(TransportDirect)<<4 |
@@ -2506,7 +2510,7 @@ func Outbound(p *Packet) bool {
 					sendBroadcast = false
 				}
 			} else {
-					// single hop: send directly
+				// single hop: send directly
 				packetSent(p)
 				Transmit(outIfc, p.Raw)
 				sent = true
@@ -2516,7 +2520,7 @@ func Outbound(p *Packet) bool {
 	}
 
 	if sendBroadcast {
-			// path unknown: broadcast via all OUT interfaces
+		// path unknown: broadcast via all OUT interfaces
 		storedHash := false
 
 		for _, ifc := range Interfaces {
@@ -2529,7 +2533,7 @@ func Outbound(p *Packet) bool {
 				shouldSend = false
 			}
 
-				// announce logic with AP/ROAMING/BOUNDARY and queues
+			// announce logic with AP/ROAMING/BOUNDARY and queues
 			if p.Type == PacketAnnounce {
 				if !shouldAnnounceOnInterface(p, ifc, outTime) {
 					shouldSend = false
@@ -2740,7 +2744,7 @@ func Inbound(raw []byte, ifc *Interface) {
 
 	if rememberHash {
 		AddPacketHash(p.PacketHash)
-			// also cache the packet here, if enabled
+		// also cache the packet here, if enabled
 	}
 
 	if p.Context == PacketCacheRequest {
@@ -2751,7 +2755,6 @@ func Inbound(raw []byte, ifc *Interface) {
 
 	fromLocal := IsLocalClientInterface(ifc)
 	forLocalClient := isForLocalClient(p)
-	forLocalClientLink := isForLocalClientLink(p)
 	proofForLocalClient := isProofForLocal(p)
 
 	if p.TransportID == nil && forLocalClient && p.Type != PacketAnnounce && TransportIdentity != nil {
@@ -2768,6 +2771,30 @@ func Inbound(raw []byte, ifc *Interface) {
 	// forward packets to the local client interface.
 	if forLocalClient && !fromLocal {
 		if entry := getPathEntry(p.DestinationHash); entry != nil && entry.RecvInterface != nil && IsLocalClientInterface(entry.RecvInterface) {
+			// Python parity: when forwarding LINKREQUEST packets to a local client, we
+			// must create a link_table entry so that subsequent LINK/LRPROOF packets
+			// can be routed back to the original interface.
+			if p.PacketType == PacketTypeLinkRequest {
+				linkID := linkIDFromLinkRequestPacket(p)
+				if lidKey, ok := makeHashKey(linkID); ok {
+					now := time.Now()
+					proofTimeout := now.Add(time.Duration(DEFAULT_PER_HOP_TIMEOUT*maxInt(1, entry.Hops))*time.Second + TransportExtraLinkProofTimeout(entry.RecvInterface))
+					le := &linkEntry{
+						Timestamp:         now,
+						NextHopID:         copyBytes(entry.NextHop),
+						NextHopInterface:  entry.RecvInterface,
+						RemainingHops:     entry.Hops,
+						ReceivedInterface: ifc,
+						Hops:              int(p.Hops),
+						DestinationHash:   copyBytes(p.DestinationHash),
+						Validated:         false,
+						ProofTimeout:      proofTimeout,
+					}
+					linkMu.Lock()
+					linkTable[lidKey] = le
+					linkMu.Unlock()
+				}
+			}
 			Transmit(entry.RecvInterface, p.Raw)
 			return
 		}
@@ -2803,15 +2830,18 @@ func Inbound(raw []byte, ifc *Interface) {
 	}
 
 	// Link transport handling (Python: routes packets according to link_table).
-	if p.Type != PacketAnnounce && p.Type != PacketLINKREQUEST && p.Context != PacketLRPROOF {
-		if forLocalClientLink && len(LocalClientInterfaces) > 0 {
-			for _, cif := range LocalClientInterfaces {
-				if cif != nil && cif != ifc {
-					Transmit(cif, p.Raw)
-				}
+	// This must include LRPROOF packets so link establishment can complete across hops.
+	if p.Type != PacketAnnounce && p.Type != PacketLINKREQUEST {
+		// If this link packet is for a local link, deliver it before any routing
+		// decisions. Shared instances will typically have no local link, and will
+		// fall back to link_table forwarding below.
+		if p.DestinationType == DestLink {
+			if link := findLinkByID(p.DestinationHash); link != nil {
+				link.Receive(p)
+				return
 			}
-			return
 		}
+
 		if forwardViaLinkTable(p, ifc) {
 			return
 		}
@@ -2966,16 +2996,16 @@ func forwardDesignatedTransportPacket(p *Packet, receivedOn *Interface) bool {
 	}
 
 	// LINKREQUEST: create link table entry, else create reverse table entry.
-		if p.PacketType == PacketTypeLinkRequest {
-			linkID := TruncatedHash(append(copyBytes(p.DestinationHash), p.Data...))
-			if lidKey, ok := makeHashKey(linkID); ok {
-				now := time.Now()
-				proofTimeout := now.Add(time.Duration(DEFAULT_PER_HOP_TIMEOUT*maxInt(1, remainingHops))*time.Second + TransportExtraLinkProofTimeout(entry.RecvInterface))
-				le := &linkEntry{
-					Timestamp:         now,
-					NextHopID:         copyBytes(nextHop),
-					NextHopInterface:  entry.RecvInterface,
-					RemainingHops:     remainingHops,
+	if p.PacketType == PacketTypeLinkRequest {
+		linkID := linkIDFromLinkRequestPacket(p)
+		if lidKey, ok := makeHashKey(linkID); ok {
+			now := time.Now()
+			proofTimeout := now.Add(time.Duration(DEFAULT_PER_HOP_TIMEOUT*maxInt(1, remainingHops))*time.Second + TransportExtraLinkProofTimeout(entry.RecvInterface))
+			le := &linkEntry{
+				Timestamp:         now,
+				NextHopID:         copyBytes(nextHop),
+				NextHopInterface:  entry.RecvInterface,
+				RemainingHops:     remainingHops,
 				ReceivedInterface: receivedOn,
 				Hops:              int(p.Hops),
 				DestinationHash:   copyBytes(p.DestinationHash),
@@ -3090,15 +3120,15 @@ func forwardTransportPacket(p *Packet, receivedOn *Interface) bool {
 	Transmit(entry.RecvInterface, outRaw)
 
 	// Create link table entry for link requests so subsequent link packets can be forwarded.
-		if p.PacketType == PacketTypeLinkRequest {
-			linkID := TruncatedHash(append(copyBytes(p.DestinationHash), p.Data...))
-			if lidKey, ok := makeHashKey(linkID); ok {
-				proofTmo := time.Now().Add(time.Duration(DEFAULT_PER_HOP_TIMEOUT)*time.Second*time.Duration(maxInt(1, remainingHops)) + TransportExtraLinkProofTimeout(entry.RecvInterface))
-				le := &linkEntry{
-					Timestamp:         time.Now(),
-					NextHopID:         copyBytes(entry.NextHop),
-					NextHopInterface:  entry.RecvInterface,
-					RemainingHops:     remainingHops,
+	if p.PacketType == PacketTypeLinkRequest {
+		linkID := linkIDFromLinkRequestPacket(p)
+		if lidKey, ok := makeHashKey(linkID); ok {
+			proofTmo := time.Now().Add(time.Duration(DEFAULT_PER_HOP_TIMEOUT)*time.Second*time.Duration(maxInt(1, remainingHops)) + TransportExtraLinkProofTimeout(entry.RecvInterface))
+			le := &linkEntry{
+				Timestamp:         time.Now(),
+				NextHopID:         copyBytes(entry.NextHop),
+				NextHopInterface:  entry.RecvInterface,
+				RemainingHops:     remainingHops,
 				ReceivedInterface: receivedOn,
 				Hops:              int(p.Hops),
 				DestinationHash:   copyBytes(p.DestinationHash),
@@ -3118,6 +3148,25 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// linkIDFromLinkRequestPacket computes the link ID in the same way as Python
+// Link.link_id_from_lr_packet(), ensuring that link-table routing works for
+// LRPROOF and subsequent link packets across transport hops.
+func linkIDFromLinkRequestPacket(p *Packet) []byte {
+	if p == nil || p.PacketType != PacketTypeLinkRequest {
+		return nil
+	}
+	// The link ID is the truncated hash of the packet hashable part, excluding
+	// optional signalling bytes beyond Link.ECPUBSIZE (64 bytes).
+	hashable := p.getHashablePart()
+	if len(p.Data) > linkEcPubSize {
+		diff := len(p.Data) - linkEcPubSize
+		if diff > 0 && diff <= len(hashable) {
+			hashable = hashable[:len(hashable)-diff]
+		}
+	}
+	return TruncatedHash(hashable)
 }
 
 func forwardProofViaReverseTable(p *Packet, receivedOn *Interface) bool {
@@ -3333,7 +3382,14 @@ func forwardAnnounceToLocalClients(p *Packet) {
 	if p == nil || len(LocalClientInterfaces) == 0 {
 		return
 	}
-	raw := append([]byte(nil), p.Raw...)
+	send := cloneAnnouncePacket(p)
+	if send == nil {
+		return
+	}
+	if err := send.Pack(); err != nil {
+		return
+	}
+	raw := append([]byte(nil), send.Raw...)
 	for _, cif := range LocalClientInterfaces {
 		if cif == nil {
 			continue
@@ -3850,7 +3906,6 @@ func ExpirePath(hash []byte) bool {
 	entry := pathTable[key]
 	if entry != nil {
 		entry.Timestamp = time.Unix(0, 0)
-		entry.ExpiresAt = time.Unix(0, 0)
 	}
 	pathTableMu.Unlock()
 	if entry == nil {
@@ -4612,17 +4667,8 @@ func GetRateTable() []map[string]any {
 }
 
 func DropPath(hash []byte) bool {
-	key, ok := makeHashKey(hash)
-	if !ok {
-		return false
-	}
-	pathTableMu.Lock()
-	defer pathTableMu.Unlock()
-	if _, ok := pathTable[key]; ok {
-		delete(pathTable, key)
-		return true
-	}
-	return false
+	// Python calls this "expire_path": keep the entry but mark it stale by setting timestamp to 0.
+	return ExpirePath(hash)
 }
 
 func DropAllVia(via []byte) int {
@@ -4632,7 +4678,7 @@ func DropAllVia(via []byte) int {
 	pathTableMu.Lock()
 	defer pathTableMu.Unlock()
 	removed := 0
-	for key, entry := range pathTable {
+	for _, entry := range pathTable {
 		if entry == nil {
 			continue
 		}
@@ -4640,9 +4686,12 @@ func DropAllVia(via []byte) int {
 			continue
 		}
 		if bytes.Equal(entry.NextHop, via) {
-			delete(pathTable, key)
+			entry.Timestamp = time.Unix(0, 0)
 			removed++
 		}
+	}
+	if removed > 0 {
+		TablesLastCulled = time.Time{}
 	}
 	return removed
 }

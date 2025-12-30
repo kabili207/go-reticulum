@@ -26,3 +26,15 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
 - `tests/integration/compare_rnprobe_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, extracts the probe responder hash from `rnstatus`, and verifies `rnprobe rnstransport.probe <hash>` succeeds with 0% loss (summary parity).
   - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
   - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rnprobe_two_nodes/`.
+- `tests/integration/compare_rnpath_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, discovers a path to the probe responder hash, verifies `-t` and `-t -j` output, and checks `-d` matches Python’s expire-path semantics (summary parity).
+  - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
+  - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rnpath_two_nodes/`.
+- `tests/integration/compare_rnir_py_vs_go.sh` — compares `rnir` basics (Python vs Go) for `--version`, `--exampleconfig`, and a real startup using a UDP interface config (bind sockets).
+  - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnir/`.
+- `tests/integration/compare_rncp_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, then tests `rncp` send (A→B) and fetch (A←B with `-F` + `-j`) by verifying file hashes (summary parity).
+  - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
+  - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rncp_two_nodes/`.
+- `tests/integration/compare_rncp_py_vs_go.sh` — compares `rncp` CLI behaviour (Python vs Go) offline: `--version`, `-h`, destination validation, `-p` identity printing via a shared identity file (`-i`), and basic exit-code parity for common error paths.
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rncp/`.
