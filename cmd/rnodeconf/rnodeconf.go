@@ -567,23 +567,50 @@ func ensureSignerKey(paths storagePaths) ([]byte, error) {
 	if fileExists(paths.SignerKeyPath) {
 		return os.ReadFile(paths.SignerKeyPath)
 	}
-	if fileExists(paths.SignerKeyPathLegacy) {
-		der, err := os.ReadFile(paths.SignerKeyPathLegacy)
-		if err == nil {
-			_ = os.WriteFile(paths.SignerKeyPath, der, 0o600)
-			return der, nil
-		}
-	}
 	// Python parity: upstream signing keys are 1024-bit and signatures are 128 bytes.
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		return nil, err
 	}
-	der := x509.MarshalPKCS1PrivateKey(key)
+	// Python parity: upstream stores signing.key as PKCS8 DER (not PKCS1).
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(paths.SignerKeyPath, der, 0o600); err != nil {
 		return nil, err
 	}
 	return der, nil
+}
+
+func parseSignerKeyDER(der []byte) (*rsa.PrivateKey, error) {
+	if len(der) == 0 {
+		return nil, errors.New("empty key data")
+	}
+	anyKey, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("invalid signing key format (expected PKCS8 DER): %w", err)
+	}
+	key, ok := anyKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("signing key is not RSA")
+	}
+	return key, nil
+}
+
+func hexWithColons(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	dst := make([]byte, 0, len(b)*3-1)
+	const hextable = "0123456789abcdef"
+	for i, v := range b {
+		if i > 0 {
+			dst = append(dst, ':')
+		}
+		dst = append(dst, hextable[v>>4], hextable[v&0x0f])
+	}
+	return string(dst)
 }
 
 func ensureDeviceSignerKey(paths storagePaths) (*rns.Identity, error) {
@@ -1039,25 +1066,42 @@ func main() {
 		}
 		fmt.Printf("Generated signing key at %s\n", paths.SignerKeyPath)
 		return
-	case showSigningKey:
-		der, err := ensureSignerKey(paths)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error loading key: %v\n", err)
-			os.Exit(1)
+		case showSigningKey:
+			// Python parity: print both the EEPROM signing public key (RSA, SPKI DER)
+			// and the device signing public key (last 32 bytes of Identity public key,
+			// colon-delimited).
+			signerDER, err := os.ReadFile(paths.SignerKeyPath)
+			if err != nil {
+				fmt.Println("Could not load EEPROM signing key")
+			} else {
+				key, err := parseSignerKeyDER(signerDER)
+				if err != nil {
+					fmt.Println("Could not deserialize signing key")
+					fmt.Println(err.Error())
+				} else if pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey); err != nil {
+					fmt.Println("Could not serialize signing key")
+					fmt.Println(err.Error())
+				} else {
+					fmt.Println("EEPROM Signing Public key:")
+					fmt.Println(hex.EncodeToString(pubDER))
+				}
+			}
+
+			id, err := rns.IdentityFromFile(paths.DeviceKeyPath)
+			if err != nil {
+				fmt.Println("Could not load device signing key")
+			} else {
+				pubAll := id.GetPublicKey()
+				if len(pubAll) < 64 {
+					fmt.Println("Could not load device signing key")
+				} else {
+					fmt.Println("")
+					fmt.Println("Device Signing Public key:")
+					fmt.Println(hexWithColons(pubAll[32:]))
+				}
+			}
+			return
 		}
-		key, err := x509.ParsePKCS1PrivateKey(der)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error parsing key: %v\n", err)
-			os.Exit(1)
-		}
-		pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error marshaling public key: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("%s\n", hex.EncodeToString(pubDER))
-		return
-	}
 
 	selectedVersion, firmwareURL := "", ""
 	if fwVersion != "" {
@@ -1534,26 +1578,26 @@ func main() {
 				os.Exit(2)
 			}
 		}
-		if signFlag {
-			if !node.Provisioned {
-				fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot create device signature")
-				os.Exit(79)
-			}
+			if signFlag {
+				if !node.Provisioned {
+					fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot create device signature")
+					os.Exit(79)
+				}
 			if len(node.Checksum) != 16 {
 				fmt.Fprintln(os.Stderr, "No EEPROM checksum present, cannot sign device")
 				os.Exit(78)
 			}
-			der, err := ensureSignerKey(paths)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Could not load local signing key")
-				os.Exit(78)
-			}
-			priv, err := x509.ParsePKCS1PrivateKey(der)
-			if err != nil || priv.N.BitLen() != 1024 {
-				fmt.Fprintln(os.Stderr, "Could not deserialize local signing key")
-				os.Exit(78)
-			}
-			checksumHash := sha256.Sum256(node.Checksum)
+				der, err := ensureSignerKey(paths)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Could not load local signing key")
+					os.Exit(78)
+				}
+				priv, err := parseSignerKeyDER(der)
+				if err != nil || priv.N.BitLen() != 1024 {
+					fmt.Fprintln(os.Stderr, "Could not deserialize local signing key")
+					os.Exit(78)
+				}
+				checksumHash := sha256.Sum256(node.Checksum)
 			sig, err := rsa.SignPSS(rand.Reader, priv, crypto.SHA256, checksumHash[:], nil)
 			if err != nil || len(sig) != 128 {
 				fmt.Fprintln(os.Stderr, "Error while signing EEPROM")
@@ -1592,32 +1636,20 @@ func main() {
 				fmt.Printf("The target firmware hash is: %x\n", node.FirmwareHashTarget)
 			}
 		}
-		if getDeviceHash {
-			if !node.Provisioned {
-				fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot get firmware hash")
-				os.Exit(77)
+			if getDeviceHash {
+				if !node.Provisioned {
+					fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot get firmware hash")
+					os.Exit(77)
+				}
+				if len(node.FirmwareHash) > 0 {
+					fmt.Printf("The actual firmware hash is: %x\n", node.FirmwareHash)
+				}
 			}
-			if len(node.FirmwareHash) > 0 {
-				fmt.Printf("The actual firmware hash is: %x\n", node.FirmwareHash)
-			}
-		}
-		if configFlag {
-			if err := node.DownloadEEPROM(1200 * time.Millisecond); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to read EEPROM: %v\n", err)
-				os.Exit(2)
-			}
-			node.verifyDeviceSignature(paths)
-			if err := node.DownloadCfgSector(800 * time.Millisecond); err != nil {
-				fmt.Fprintf(os.Stderr, "could not read config sector: %v\n", err)
-				os.Exit(2)
-			}
-			printDeviceConfig(node, showPSK)
-		}
 
-		// Modes.
-		if normalModeFlag {
-			if !node.Provisioned {
-				fmt.Fprintln(os.Stderr, "This device contains a valid firmware, but EEPROM is invalid.")
+			// Modes.
+			if normalModeFlag {
+				if !node.Provisioned {
+					fmt.Fprintln(os.Stderr, "This device contains a valid firmware, but EEPROM is invalid.")
 				fmt.Fprintln(os.Stderr, "Probably the device has not been initialised, or the EEPROM has been erased.")
 				fmt.Fprintln(os.Stderr, "Please correctly initialise the device and try again!")
 				os.Exit(2)
@@ -1693,13 +1725,17 @@ func main() {
 				fmt.Fprintf(os.Stderr, "failed to initialise radio: %v\n", err)
 				os.Exit(2)
 			}
-			time.Sleep(500 * time.Millisecond)
+			if node.Serial == nil || !strings.HasPrefix(node.Serial.Name(), "sim://") {
+				time.Sleep(500 * time.Millisecond)
+			}
 			if err := node.SetTNCMode(); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to set TNC mode: %v\n", err)
 				os.Exit(2)
 			}
 			fmt.Println("Device set to TNC operating mode")
-			time.Sleep(1 * time.Second)
+			if node.Serial == nil || !strings.HasPrefix(node.Serial.Name(), "sim://") {
+				time.Sleep(1 * time.Second)
+			}
 		}
 
 		// Bluetooth.
@@ -1729,9 +1765,10 @@ func main() {
 			case "OFF":
 				modeByte = 0x00
 			case "AP":
-				modeByte = 0x01
-			case "STATION":
+				// Python parity: sta=0x01, ap=0x02
 				modeByte = 0x02
+			case "STATION":
+				modeByte = 0x01
 			}
 			if err := node.SetWifiMode(modeByte); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to set wifi mode: %v\n", err)
@@ -1841,6 +1878,20 @@ func main() {
 		}
 		if iaDisable {
 			_ = node.SetDisableInterferenceAvoidance(true)
+		}
+
+		// Device config output (Python parity): print after applying modifications.
+		if configFlag {
+			if err := node.DownloadEEPROM(1200 * time.Millisecond); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to read EEPROM: %v\n", err)
+				os.Exit(2)
+			}
+			node.verifyDeviceSignature(paths)
+			if err := node.DownloadCfgSector(800 * time.Millisecond); err != nil {
+				fmt.Fprintf(os.Stderr, "could not read config sector: %v\n", err)
+				os.Exit(2)
+			}
+			printDeviceConfig(node, showPSK)
 		}
 
 		// EEPROM operations.
@@ -2155,7 +2206,7 @@ func runROMBootstrap(node *RNode, paths storagePaths, opts bootstrapOptions) err
 	if err != nil {
 		return fmt.Errorf("could not load signing key: %w", err)
 	}
-	priv, err := x509.ParsePKCS1PrivateKey(der)
+	priv, err := parseSignerKeyDER(der)
 	if err != nil {
 		return fmt.Errorf("could not parse signing key: %w", err)
 	}
@@ -3388,15 +3439,15 @@ func (n *RNode) verifyDeviceSignature(paths storagePaths) {
 		local  bool
 	}
 
-	// Local signing key (if present).
-	if fileExists(paths.SignerKeyPath) {
-		if der, err := os.ReadFile(paths.SignerKeyPath); err == nil {
-			if priv, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-				if priv.N.BitLen() == 1024 {
-					candidates = append(candidates, struct {
-						vendor string
-						pub    *rsa.PublicKey
-						local  bool
+		// Local signing key (if present).
+		if fileExists(paths.SignerKeyPath) {
+			if der, err := os.ReadFile(paths.SignerKeyPath); err == nil {
+				if priv, err := parseSignerKeyDER(der); err == nil {
+					if priv.N.BitLen() == 1024 {
+						candidates = append(candidates, struct {
+							vendor string
+							pub    *rsa.PublicKey
+							local  bool
 					}{vendor: "LOCAL", pub: &priv.PublicKey, local: true})
 				}
 			}

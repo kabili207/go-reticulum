@@ -36,7 +36,11 @@ func TestRNode_VerifyDeviceSignature_LocalKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gen rsa: %v", err)
 	}
-	if err := os.WriteFile(paths.SignerKeyPath, x509.MarshalPKCS1PrivateKey(priv), 0o600); err != nil {
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	if err := os.WriteFile(paths.SignerKeyPath, der, 0o600); err != nil {
 		t.Fatalf("write key: %v", err)
 	}
 	checksumHash := sha256.Sum256(checksum)

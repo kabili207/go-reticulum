@@ -137,19 +137,33 @@ func makeSimEEPROM() []byte {
 	eeprom[romAddrInfoLock] = romInfoLockByte
 
 	// Mark some config sections as present for nicer `--config` output.
-	for _, addr := range []int{
-		romAddrConfBT, romAddrConfWiFi, romAddrConfDInt, romAddrConfPSet, romAddrConfBSet,
-	} {
-		if addr >= 0 && addr < len(eeprom) {
-			eeprom[addr] = confOKByte
-		}
-	}
+	// Python parity: these EEPROM fields store actual config values (not 0x73 in all slots).
+	// Start with a sane, mostly-default configuration.
+	eeprom[romAddrConfBT] = 0x00       // Bluetooth disabled
+	eeprom[romAddrConfWiFi] = 0x00     // WiFi off
+	eeprom[romAddrConfWChn] = 0x01     // default channel
+	eeprom[romAddrConfDIA] = 0x00      // IA enabled
+	eeprom[romAddrConfDInt] = 0x80     // display brightness
+	eeprom[romAddrConfDAdr] = 0xFF     // default display address
+	eeprom[romAddrConfDBlk] = 0x00     // display blanking seconds
+	eeprom[romAddrConfBSet] = 0x00     // blanking disabled
+	eeprom[romAddrConfDRot] = 0xFF     // default rotation
+	eeprom[romAddrConfPInt] = 0x00     // neopixel intensity
+	eeprom[romAddrConfPSet] = 0x00     // neopixel not configured
 	return eeprom
 }
 
 func makeSimCfgSector() []byte {
-	// Minimal config sector.
-	return make([]byte, 256)
+	// Minimal config sector: default is 0xFF-filled, and specific fields are
+	// initialised to "unset" (empty SSID/PSK, DHCP IP/NM).
+	sec := bytes.Repeat([]byte{0xFF}, 256)
+	if cfgAddrIP+4 <= len(sec) {
+		copy(sec[cfgAddrIP:cfgAddrIP+4], []byte{0x00, 0x00, 0x00, 0x00})
+	}
+	if cfgAddrNM+4 <= len(sec) {
+		copy(sec[cfgAddrNM:cfgAddrNM+4], []byte{0x00, 0x00, 0x00, 0x00})
+	}
+	return sec
 }
 
 func (p *simSerialPort) Name() string { return p.name }
@@ -215,6 +229,10 @@ func (p *simSerialPort) SetDTR(bool) error { return nil }
 func (p *simSerialPort) SetRTS(bool) error { return nil }
 
 func (p *simSerialPort) enqueueFrame(cmd byte, payload []byte) {
+	// KISS framing rules: payload must be escaped so it doesn't contain FEND/FESC bytes.
+	if len(payload) > 0 {
+		payload = kissEscape(payload)
+	}
 	_ = p.readQ.WriteByte(KISS_FEND)
 	_ = p.readQ.WriteByte(cmd)
 	if len(payload) > 0 {
@@ -266,6 +284,9 @@ func (p *simSerialPort) handleFrame(cmd byte, data []byte) {
 		for i := range p.eeprom {
 			p.eeprom[i] = 0x00
 		}
+		for i := range p.cfgSector {
+			p.cfgSector[i] = 0xFF
+		}
 		// keep size stable and clear lock byte
 		if len(p.eeprom) > romAddrInfoLock {
 			p.eeprom[romAddrInfoLock] = 0x00
@@ -282,10 +303,101 @@ func (p *simSerialPort) handleFrame(cmd byte, data []byte) {
 		if len(data) == 128 && len(p.eeprom) >= int(romAddrSignature)+128 {
 			copy(p.eeprom[romAddrSignature:romAddrSignature+128], data)
 		}
-	case KISS_CMD_WIFI_MODE, KISS_CMD_WIFI_CHN, KISS_CMD_WIFI_SSID, KISS_CMD_WIFI_PSK, KISS_CMD_WIFI_IP, KISS_CMD_WIFI_NM:
-		// accept silently
-	case KISS_CMD_BT_CTRL, KISS_CMD_BT_PIN, KISS_CMD_DISP_INT, KISS_CMD_DISP_BLNK, KISS_CMD_DISP_ROT, KISS_CMD_DISP_ADR, KISS_CMD_DISP_RCND, KISS_CMD_NP_INT, KISS_CMD_DIS_IA:
-		// accept silently
+	case KISS_CMD_WIFI_MODE:
+		if len(data) >= 1 && romAddrConfWiFi < len(p.eeprom) {
+			p.eeprom[romAddrConfWiFi] = data[0]
+		}
+	case KISS_CMD_WIFI_CHN:
+		if len(data) >= 1 && romAddrConfWChn < len(p.eeprom) {
+			p.eeprom[romAddrConfWChn] = data[0]
+		}
+	case KISS_CMD_WIFI_SSID:
+		if cfgAddrSSID < len(p.cfgSector) {
+			for i := 0; i < 32 && cfgAddrSSID+i < len(p.cfgSector); i++ {
+				p.cfgSector[cfgAddrSSID+i] = 0xFF
+			}
+			if len(data) == 1 && data[0] == 0x00 {
+				break
+			}
+			for i := 0; i < 32 && i < len(data) && cfgAddrSSID+i < len(p.cfgSector); i++ {
+				if data[i] == 0x00 {
+					break
+				}
+				p.cfgSector[cfgAddrSSID+i] = data[i]
+			}
+		}
+	case KISS_CMD_WIFI_PSK:
+		if cfgAddrPSK < len(p.cfgSector) {
+			for i := 0; i < 32 && cfgAddrPSK+i < len(p.cfgSector); i++ {
+				p.cfgSector[cfgAddrPSK+i] = 0xFF
+			}
+			if len(data) == 1 && data[0] == 0x00 {
+				break
+			}
+			for i := 0; i < 32 && i < len(data) && cfgAddrPSK+i < len(p.cfgSector); i++ {
+				if data[i] == 0x00 {
+					break
+				}
+				p.cfgSector[cfgAddrPSK+i] = data[i]
+			}
+		}
+	case KISS_CMD_WIFI_IP:
+		if len(data) >= 4 && cfgAddrIP+4 <= len(p.cfgSector) {
+			copy(p.cfgSector[cfgAddrIP:cfgAddrIP+4], data[:4])
+		}
+	case KISS_CMD_WIFI_NM:
+		if len(data) >= 4 && cfgAddrNM+4 <= len(p.cfgSector) {
+			copy(p.cfgSector[cfgAddrNM:cfgAddrNM+4], data[:4])
+		}
+	case KISS_CMD_BT_CTRL:
+		if romAddrConfBT < len(p.eeprom) {
+			switch {
+			case len(data) >= 1 && data[0] == 0x00:
+				p.eeprom[romAddrConfBT] = 0x00
+			case len(data) >= 1 && (data[0] == 0x01 || data[0] == 0x02):
+				p.eeprom[romAddrConfBT] = confOKByte
+			}
+		}
+	case KISS_CMD_DISP_INT:
+		if len(data) >= 1 && romAddrConfDInt < len(p.eeprom) {
+			p.eeprom[romAddrConfDInt] = data[0]
+		}
+	case KISS_CMD_DISP_BLNK:
+		if len(data) >= 1 {
+			if romAddrConfDBlk < len(p.eeprom) {
+				p.eeprom[romAddrConfDBlk] = data[0]
+			}
+			if romAddrConfBSet < len(p.eeprom) {
+				if data[0] == 0x00 {
+					p.eeprom[romAddrConfBSet] = 0x00
+				} else {
+					p.eeprom[romAddrConfBSet] = confOKByte
+				}
+			}
+		}
+	case KISS_CMD_DISP_ROT:
+		if len(data) >= 1 && romAddrConfDRot < len(p.eeprom) {
+			p.eeprom[romAddrConfDRot] = data[0]
+		}
+	case KISS_CMD_DISP_ADR:
+		if len(data) >= 1 && romAddrConfDAdr < len(p.eeprom) {
+			p.eeprom[romAddrConfDAdr] = data[0]
+		}
+	case KISS_CMD_DISP_RCND:
+		// no state change needed
+	case KISS_CMD_NP_INT:
+		if len(data) >= 1 {
+			if romAddrConfPInt < len(p.eeprom) {
+				p.eeprom[romAddrConfPInt] = data[0]
+			}
+			if romAddrConfPSet < len(p.eeprom) {
+				p.eeprom[romAddrConfPSet] = confOKByte
+			}
+		}
+	case KISS_CMD_DIS_IA:
+		if len(data) >= 1 && romAddrConfDIA < len(p.eeprom) {
+			p.eeprom[romAddrConfDIA] = data[0]
+		}
 	case KISS_CMD_LEAVE:
 		// no-op
 	default:

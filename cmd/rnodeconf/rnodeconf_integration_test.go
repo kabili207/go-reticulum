@@ -272,6 +272,148 @@ func TestRNodeconfIntegration_TrustKeyInvalidDERExit1(t *testing.T) {
 	}
 }
 
+func TestRNodeconfIntegration_ListModelsAndShowModel(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root, "--list-models")
+	if code != 0 {
+		t.Fatalf("list-models exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Model") && !strings.Contains(out, "model") {
+		t.Fatalf("unexpected list-models output:\n%s", out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--show-model", "A1")
+	if code != 0 {
+		t.Fatalf("show-model exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Model") && !strings.Contains(out, "model") {
+		t.Fatalf("unexpected show-model output:\n%s", out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--show-model", "NOPE")
+	if code != 1 {
+		t.Fatalf("show-model invalid expected exit 1, got %d\n%s", code, out)
+	}
+}
+
+func TestRNodeconfIntegration_KeyAndShowSigningKey(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root, "--key")
+	if code != 0 {
+		t.Fatalf("key exit=%d\n%s", code, out)
+	}
+
+	// Key paths under RNODECONF_DIR.
+	signerPath := filepath.Join(root, "cfg", "signing.key")
+	if _, err := os.Stat(signerPath); err != nil {
+		t.Fatalf("expected signing.key to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cfg", "device.key")); err != nil {
+		t.Fatalf("expected device.key to exist: %v", err)
+	}
+
+	signerDER, err := os.ReadFile(signerPath)
+	if err != nil {
+		t.Fatalf("read signing.key: %v", err)
+	}
+	anyKey, err := x509.ParsePKCS8PrivateKey(signerDER)
+	if err != nil {
+		t.Fatalf("expected PKCS8 signing.key, got parse error: %v", err)
+	}
+	priv, ok := anyKey.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("expected RSA private key, got %T", anyKey)
+	}
+	if priv.N.BitLen() != 1024 {
+		t.Fatalf("expected 1024-bit signing key, got %d", priv.N.BitLen())
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--show-signing-key")
+	if code != 0 {
+		t.Fatalf("show-signing-key exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "EEPROM Signing Public key:") {
+		t.Fatalf("expected EEPROM signing key output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Device Signing Public key:") {
+		t.Fatalf("expected device signing key output, got:\n%s", out)
+	}
+
+	lines := strings.Split(out, "\n")
+	var eepromHex, deviceHex string
+	for i := 0; i < len(lines); i++ {
+		switch strings.TrimSpace(lines[i]) {
+		case "EEPROM Signing Public key:":
+			for j := i + 1; j < len(lines); j++ {
+				val := strings.TrimSpace(lines[j])
+				if val != "" {
+					eepromHex = val
+					break
+				}
+			}
+		case "Device Signing Public key:":
+			for j := i + 1; j < len(lines); j++ {
+				val := strings.TrimSpace(lines[j])
+				if val != "" {
+					deviceHex = val
+					break
+				}
+			}
+		}
+	}
+	if eepromHex == "" || deviceHex == "" {
+		t.Fatalf("could not parse show-signing-key output:\n%s", out)
+	}
+
+	eepromDER, err := hex.DecodeString(eepromHex)
+	if err != nil || len(eepromDER) == 0 {
+		t.Fatalf("expected DER hex for EEPROM public key, got %q", eepromHex)
+	}
+	if _, err := x509.ParsePKIXPublicKey(eepromDER); err != nil {
+		t.Fatalf("expected valid DER SubjectPublicKeyInfo, got parse error: %v", err)
+	}
+
+	deviceDER, err := hex.DecodeString(strings.ReplaceAll(deviceHex, ":", ""))
+	if err != nil || len(deviceDER) != 32 {
+		t.Fatalf("expected 32-byte colon-delimited device key, got %q", deviceHex)
+	}
+}
+
+func TestRNodeconfIntegration_ShowSigningKey_NoKeysDoesNotCreateKeys(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root, "--show-signing-key")
+	if code != 0 {
+		t.Fatalf("show-signing-key exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Could not load EEPROM signing key") {
+		t.Fatalf("expected missing EEPROM signing key message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Could not load device signing key") {
+		t.Fatalf("expected missing device signing key message, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cfg", "signing.key")); err == nil {
+		t.Fatalf("did not expect signing.key to be created")
+	}
+	if _, err := os.Stat(filepath.Join(root, "cfg", "device.key")); err == nil {
+		t.Fatalf("did not expect device.key to be created")
+	}
+}
+
 func TestRNodeconfIntegration_SimPort_InfoAndConfig(t *testing.T) {
 	root := newITestRoot(t)
 	bin := getRNodeconfBin(t)
@@ -297,6 +439,177 @@ func TestRNodeconfIntegration_SimPort_InfoAndConfig(t *testing.T) {
 	if !strings.Contains(out, "Device configuration") && !strings.Contains(out, "WiFi") && !strings.Contains(out, "Config") {
 		// output format is verbose and may change; just ensure command didn't fail.
 		t.Fatalf("unexpected config output:\n%s", out)
+	}
+}
+
+func TestRNodeconfIntegration_SimPort_ConfigReflectsWiFiAndMasksPSK(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// Without --show-psk: PSK should be masked.
+	out, code := runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--wifi", "sta",
+		"--channel", "6",
+		"--ssid", "TestNet",
+		"--psk", "password123",
+		"--ip", "192.168.1.10",
+		"--nm", "255.255.255.0",
+		"--bluetooth-on",
+		"--ia-disable",
+		"--display", "10",
+		"--timeout", "5",
+		"--rotation", "1",
+		"--display-addr", "0x42",
+		"--np", "7",
+		"--config",
+	)
+	if code != 0 {
+		t.Fatalf("config exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "WiFi") || !strings.Contains(out, "Enabled (Station)") {
+		t.Fatalf("expected station mode in output:\n%s", out)
+	}
+	if !strings.Contains(out, "SSID") || !strings.Contains(out, "TestNet") {
+		t.Fatalf("expected SSID in output:\n%s", out)
+	}
+	if !strings.Contains(out, "PSK") || !strings.Contains(out, "***********") {
+		t.Fatalf("expected masked PSK in output:\n%s", out)
+	}
+	if !strings.Contains(out, "IP Address") || !strings.Contains(out, "192.168.1.10") {
+		t.Fatalf("expected IP in output:\n%s", out)
+	}
+	if !strings.Contains(out, "Network Mask") || !strings.Contains(out, "255.255.255.0") {
+		t.Fatalf("expected NM in output:\n%s", out)
+	}
+	if !strings.Contains(out, "Bluetooth") || !strings.Contains(out, "Enabled") {
+		t.Fatalf("expected bluetooth enabled in output:\n%s", out)
+	}
+	if !strings.Contains(out, "Interference avoidance") || !strings.Contains(out, "Disabled") {
+		t.Fatalf("expected IA disabled in output:\n%s", out)
+	}
+
+	// With --show-psk: PSK should be visible.
+	out, code = runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--wifi", "sta",
+		"--ssid", "TestNet",
+		"--psk", "password123",
+		"--config",
+		"--show-psk",
+	)
+	if code != 0 {
+		t.Fatalf("config(show-psk) exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "PSK") || !strings.Contains(out, "password123") {
+		t.Fatalf("expected unmasked PSK in output:\n%s", out)
+	}
+}
+
+func TestRNodeconfIntegration_SimPort_WiFiAPModeConfig(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--wifi", "ap",
+		"--ssid", "APNET",
+		"--psk", "password123",
+		"--config",
+	)
+	if code != 0 {
+		t.Fatalf("wifi ap exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Enabled (AP)") {
+		t.Fatalf("expected AP mode in output:\n%s", out)
+	}
+	// AP mode uses the built-in IP/mask defaults in the config view.
+	if !strings.Contains(out, "10.0.0.1") || !strings.Contains(out, "255.255.255.0") {
+		t.Fatalf("expected AP IP defaults in output:\n%s", out)
+	}
+}
+
+func TestRNodeconfIntegration_ValidationErrors(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root, "--ia-enable", "--ia-disable")
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d\n%s", code, out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--display", "300")
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d\n%s", code, out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--ip", "999.1.1.1")
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d\n%s", code, out)
+	}
+
+	// Channel parsing allows larger values, but device setter only accepts 1..14 -> runtime error.
+	out, code = runRNodeconf(t, ctx, bin, root, root, "--port", "sim://esp32", "--channel", "20")
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d\n%s", code, out)
+	}
+}
+
+func TestRNodeconfIntegration_SimPort_ModesAndROMBootstrap(t *testing.T) {
+	root := newITestRoot(t)
+	bin := getRNodeconfBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, code := runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--normal",
+	)
+	if code != 0 {
+		t.Fatalf("normal exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Device set to normal") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--tnc",
+		"--freq", "868000000",
+		"--bw", "125000",
+		"--txp", "10",
+		"--sf", "7",
+		"--cr", "5",
+	)
+	if code != 0 {
+		t.Fatalf("tnc exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Device set to TNC operating mode") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+
+	out, code = runRNodeconf(t, ctx, bin, root, root,
+		"--port", "sim://esp32",
+		"--rom",
+		"--product", "0x03",
+		"--model", "A1",
+		"--hwrev", "1",
+	)
+	if code != 0 {
+		t.Fatalf("rom bootstrap exit=%d\n%s", code, out)
+	}
+	if !strings.Contains(out, "Bootstrapping device EEPROM") {
+		t.Fatalf("unexpected output:\n%s", out)
 	}
 }
 
