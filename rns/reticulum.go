@@ -631,6 +631,12 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		r.UseAFUnix = false
 	}
 
+	// Abstract AF_UNIX socket addresses are Linux-only. Fall back to TCP on other platforms.
+	if r.UseAFUnix && runtime.GOOS != "linux" {
+		r.UseAFUnix = false
+		r.SharedInstanceType = "tcp"
+	}
+
 	if r.LocalSocketPath == "" && r.UseAFUnix {
 		r.LocalSocketPath = "default"
 	}

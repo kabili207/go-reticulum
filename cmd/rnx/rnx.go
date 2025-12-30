@@ -61,9 +61,9 @@ func main() {
 		interactive   bool
 		noAnnounce    bool
 
-		stdinStr  string
-		stdoutLim *int
-		stderrLim *int
+		stdinStr  optionalStringFlag
+		stdoutLim optionalIntFlag
+		stderrLim optionalIntFlag
 
 		allowed  multiString
 		noAuth   bool
@@ -72,7 +72,7 @@ func main() {
 		mirror   bool
 
 		timeout       float64
-		resultTimeout float64
+		resultTimeout optionalFloat64Flag
 	)
 
 	fs := flag.NewFlagSet("rnx", flag.ContinueOnError)
@@ -116,11 +116,11 @@ func main() {
 	fs.BoolVar(&mirror, "m", false, "mirror exit code of remote command")
 
 	fs.Float64Var(&timeout, "w", rns.TransportPathRequestTimeout, "connect and request timeout before giving up")
-	fs.Float64Var(&resultTimeout, "W", 0, "max result download time")
+	fs.Var(&resultTimeout, "W", "max result download time")
 
-	fs.StringVar(&stdinStr, "stdin", "", "pass input to stdin")
-	stdoutTmp := fs.Int("stdout", -1, "max size in bytes of returned stdout")
-	stderrTmp := fs.Int("stderr", -1, "max size in bytes of returned stderr")
+	fs.Var(&stdinStr, "stdin", "pass input to stdin")
+	fs.Var(&stdoutLim, "stdout", "max size in bytes of returned stdout")
+	fs.Var(&stderrLim, "stderr", "max size in bytes of returned stderr")
 
 	var showVersion bool
 	fs.BoolVar(&showVersion, "version", false, "show version and exit")
@@ -169,13 +169,6 @@ func main() {
 		command = fs.Arg(1)
 	}
 
-	if *stdoutTmp >= 0 {
-		stdoutLim = stdoutTmp
-	}
-	if *stderrTmp >= 0 {
-		stderrLim = stderrTmp
-	}
-
 	if showVersion {
 		fmt.Printf("rnx %s\n", rns.GetVersion())
 		return
@@ -212,11 +205,11 @@ func main() {
 			noID,
 			destHex,
 			command,
-			stdinStr,
-			stdoutLim,
-			stderrLim,
+			optionalStringValue(stdinStr),
+			optionalIntValue(stdoutLim),
+			optionalIntValue(stderrLim),
 			timeout,
-			resultTimeout,
+			resultTimeoutValue(resultTimeout),
 			interactive,
 		)
 		if !interactive {
@@ -260,15 +253,15 @@ func main() {
 				detailed,
 				mirror,
 				noID,
-				destHex,
-				cmdLine,
-				"",
-				stdoutLim,
-				stderrLim,
-				timeout,
-				resultTimeout,
-				true,
-			)
+			destHex,
+			cmdLine,
+			nil,
+			optionalIntValue(stdoutLim),
+			optionalIntValue(stderrLim),
+			timeout,
+			resultTimeoutValue(resultTimeout),
+			true,
+		)
 		}
 	}
 
@@ -309,6 +302,89 @@ func (c countFlag) Set(s string) error {
 	return nil
 }
 
+type optionalFloat64Flag struct {
+	set bool
+	val float64
+}
+
+func (o *optionalFloat64Flag) String() string {
+	if o == nil || !o.set {
+		return "None"
+	}
+	return pyFloat(o.val)
+}
+
+func (o *optionalFloat64Flag) Set(s string) error {
+	if o == nil {
+		return nil
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		o.set = true
+		o.val = 0
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("invalid float %q", s)
+	}
+	o.set = true
+	o.val = v
+	return nil
+}
+
+type optionalIntFlag struct {
+	set bool
+	val int
+}
+
+func (o *optionalIntFlag) String() string {
+	if o == nil || !o.set {
+		return "None"
+	}
+	return strconv.Itoa(o.val)
+}
+
+func (o *optionalIntFlag) Set(s string) error {
+	if o == nil {
+		return nil
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		o.set = true
+		o.val = 0
+		return nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("invalid int %q", s)
+	}
+	o.set = true
+	o.val = v
+	return nil
+}
+
+type optionalStringFlag struct {
+	set bool
+	val string
+}
+
+func (o *optionalStringFlag) String() string {
+	if o == nil || !o.set {
+		return "None"
+	}
+	return o.val
+}
+
+func (o *optionalStringFlag) Set(s string) error {
+	if o == nil {
+		return nil
+	}
+	o.set = true
+	o.val = s
+	return nil
+}
+
 // expandCountFlags expands Python-style "-vvv" / "-qq" into "-v -v -v" / "-q -q".
 // This keeps compatibility with the original rnx utility CLI.
 func expandCountFlags(args []string) []string {
@@ -341,6 +417,29 @@ func allSameRune(s string, r rune) bool {
 		}
 	}
 	return s != ""
+}
+
+func resultTimeoutValue(opt optionalFloat64Flag) float64 {
+	if opt.set {
+		return opt.val
+	}
+	return -1
+}
+
+func optionalIntValue(opt optionalIntFlag) *int {
+	if !opt.set {
+		return nil
+	}
+	v := opt.val
+	return &v
+}
+
+func optionalStringValue(opt optionalStringFlag) *string {
+	if !opt.set {
+		return nil
+	}
+	v := opt.val
+	return &v
 }
 
 // ---------- listen side ----------
@@ -465,7 +564,8 @@ func executeReceivedCommand(path string, data any, requestID []byte, _ []byte, r
 	timeout := floatFromAny(args[1])
 	oLimit := optionalInt(args[2])
 	eLimit := optionalInt(args[3])
-	stdinBytes := bytesFromAny(args[4])
+	stdinArg := args[4]
+	stdinBytes := bytesFromAny(stdinArg)
 
 	command := string(cmdBytes)
 	var remoteIDStr string
@@ -492,7 +592,7 @@ func executeReceivedCommand(path string, data any, requestID []byte, _ []byte, r
 	}
 
 	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-	if len(stdinBytes) > 0 {
+	if stdinArg != nil {
 		cmd.Stdin = bytes.NewReader(stdinBytes)
 	}
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -563,7 +663,8 @@ func execute(
 	identitypath *string,
 	verbosity, quietness int,
 	detailed, mirror, noID bool,
-	destHex, cmd, stdin string,
+	destHex, cmd string,
+	stdin *string,
 	stdoutLim, stderrLim *int,
 	timeout, resultTimeout float64,
 	interactive bool,
@@ -616,15 +717,15 @@ func execute(
 		}
 	}
 
-	if link == nil || link.Status == rns.LinkClosed || link.Status == rns.LinkPending {
-		var err error
-		link, err = rns.NewOutgoingLink(listenerDest, 0, nil, nil)
-		if err != nil {
-			fmt.Println("Could not create link:", err)
-			os.Exit(243)
+		if link == nil || link.Status == rns.LinkClosed || link.Status == rns.LinkPending {
+			var err error
+			link, err = rns.NewOutgoingLink(listenerDest, rns.LinkModeDefault, nil, nil)
+			if err != nil {
+				fmt.Println("Could not create link:", err)
+				os.Exit(243)
+			}
+			linkIdentified = false
 		}
-		linkIdentified = false
-	}
 
 	ok := spin(func() bool { return link.Status == rns.LinkActive },
 		"Establishing link with "+rns.PrettyHex(destHash),
@@ -639,9 +740,9 @@ func execute(
 		linkIdentified = true
 	}
 
-	var stdinBytes []byte
-	if stdin != "" {
-		stdinBytes = []byte(stdin)
+	var stdinBytes any
+	if stdin != nil {
+		stdinBytes = []byte(*stdin)
 	}
 
 	reqData := []any{
@@ -1099,45 +1200,91 @@ func expandUser(path string) string {
 }
 
 func splitCommand(input string) ([]string, error) {
-	var args []string
-	var current strings.Builder
-	var quote rune
-	escaped := false
+	// Best-effort shlex.split() compatibility (POSIX mode):
+	// - Whitespace splits tokens unless inside quotes.
+	// - Single quotes preserve everything until next single quote.
+	// - Double quotes preserve everything until next double quote, but allow backslash
+	//   escaping of: \\ \" \\$ \\` and newline.
+	// - Backslash outside quotes escapes next character.
+	runes := []rune(input)
+	var (
+		args    []string
+		current strings.Builder
+		mode    rune // 0, '\'', '"'
+	)
 
-	for _, r := range input {
-		switch {
-		case escaped:
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		args = append(args, current.String())
+		current.Reset()
+	}
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+
+		switch mode {
+		case '\'':
+			if r == '\'' {
+				mode = 0
+				continue
+			}
 			current.WriteRune(r)
-			escaped = false
-		case r == '\\':
-			escaped = true
-		case quote != 0:
-			if r == quote {
-				quote = 0
-			} else {
-				current.WriteRune(r)
+			continue
+
+		case '"':
+			if r == '"' {
+				mode = 0
+				continue
 			}
-		case r == '\'' || r == '"':
-			quote = r
+			if r == '\\' {
+				if i+1 >= len(runes) {
+					return nil, errors.New("unterminated escape in command")
+				}
+				next := runes[i+1]
+				switch next {
+				case '\\', '"', '$', '`':
+					current.WriteRune(next)
+					i++
+					continue
+				case '\n':
+					// swallow escaped newline
+					i++
+					continue
+				default:
+					// keep the backslash if it doesn't escape a special char
+					current.WriteRune('\\')
+					current.WriteRune(next)
+					i++
+					continue
+				}
+			}
+			current.WriteRune(r)
+			continue
+		}
+
+		// mode == 0 (unquoted)
+		switch {
 		case unicode.IsSpace(r):
-			if current.Len() > 0 {
-				args = append(args, current.String())
-				current.Reset()
+			flush()
+		case r == '\'' || r == '"':
+			mode = r
+		case r == '\\':
+			if i+1 >= len(runes) {
+				return nil, errors.New("unterminated escape in command")
 			}
+			current.WriteRune(runes[i+1])
+			i++
 		default:
 			current.WriteRune(r)
 		}
 	}
 
-	if escaped {
-		return nil, errors.New("unterminated escape in command")
-	}
-	if quote != 0 {
+	if mode != 0 {
 		return nil, errors.New("unterminated quote in command")
 	}
-	if current.Len() > 0 {
-		args = append(args, current.String())
-	}
+	flush()
 	return args, nil
 }
 
@@ -1166,10 +1313,10 @@ func spinStat(until func() bool, timeout float64) bool {
 	i := 0
 	syms := []rune("⢄⢂⢁⡁⡈⡐⡠")
 	var deadline time.Time
-	if timeout > 0 {
+	if timeout >= 0 {
 		deadline = time.Now().Add(time.Duration(timeout * float64(time.Second)))
 	}
-	for (timeout == 0 || time.Now().Before(deadline)) && !until() {
+	for (timeout < 0 || time.Now().Before(deadline)) && !until() {
 		time.Sleep(100 * time.Millisecond)
 		prg := currentProgress
 		percent := roundFloat(prg*100.0, 1)
@@ -1182,7 +1329,7 @@ func spinStat(until func() bool, timeout float64) bool {
 		i = (i + 1) % len(syms)
 	}
 	fmt.Print("\r                                                                                  \r")
-	if timeout > 0 && time.Now().After(deadline) && !until() {
+	if timeout >= 0 && time.Now().After(deadline) && !until() {
 		return false
 	}
 	return true
