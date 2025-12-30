@@ -14,10 +14,27 @@ func TestSpeedStr(t *testing.T) {
 	}
 }
 
+func TestNumField_UnsignedCounters(t *testing.T) {
+	m := map[string]any{
+		"u64": uint64(123),
+		"u32": uint32(456),
+		"u":   uint(789),
+	}
+	if got, ok := numField(m, "u64"); !ok || got != 123 {
+		t.Fatalf("u64: got=%d ok=%v", got, ok)
+	}
+	if got, ok := numField(m, "u32"); !ok || got != 456 {
+		t.Fatalf("u32: got=%d ok=%v", got, ok)
+	}
+	if got, ok := numField(m, "u"); !ok || got != 789 {
+		t.Fatalf("u: got=%d ok=%v", got, ok)
+	}
+}
+
 func TestSortInterfaces_MissingKeys(t *testing.T) {
 	ifs := []map[string]any{
 		{"name": "a", "bitrate": 200},
-		{"name": "b"},               // missing bitrate
+		{"name": "b"},                 // missing bitrate
 		{"name": "c", "bitrate": nil}, // nil bitrate
 		{"name": "d", "bitrate": 100},
 	}
@@ -27,4 +44,3 @@ func TestSortInterfaces_MissingKeys(t *testing.T) {
 		t.Fatalf("unexpected order: %v", []any{ifs[0]["name"], ifs[1]["name"], ifs[2]["name"], ifs[3]["name"]})
 	}
 }
-

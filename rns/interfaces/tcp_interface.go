@@ -130,6 +130,8 @@ type TCPClientInterface struct {
 
 	rxb atomic.Uint64
 	txb atomic.Uint64
+
+	iface *Interface
 }
 
 func NewTCPClientInitiator(owner TCPOwner, log TCPLog, name, host string, port int, kiss, i2p bool) *TCPClientInterface {
@@ -253,6 +255,7 @@ func (t *TCPClientInterface) InitialConnect(ctx context.Context) {
 		go t.reconnectLoop()
 		return
 	}
+	t.synthesizeTunnelIfNeeded()
 	go t.readLoop()
 	// Python: if not KISS, wants_tunnel = True (handled at a higher level).
 }
@@ -333,11 +336,31 @@ func (t *TCPClientInterface) reconnectLoop() {
 
 	// Python parity: if non-KISS framing is used, a tunnel may need to be
 	// synthesized again after reconnect.
-	if t.WantsTunnel() && TCPTunnelSynthesizer != nil {
-		TCPTunnelSynthesizer(t)
-	}
+	t.synthesizeTunnelIfNeeded()
 
 	go t.readLoop()
+}
+
+func (t *TCPClientInterface) synthesizeTunnelIfNeeded() {
+	if t == nil || t.KISSFraming || !t.WantsTunnel() {
+		return
+	}
+
+	called := false
+	if TCPTunnelSynthesizer != nil {
+		TCPTunnelSynthesizer(t)
+		called = true
+	} else if TunnelSynthesizer != nil && t.iface != nil {
+		TunnelSynthesizer(t.iface)
+		called = true
+	}
+
+	if called {
+		if t.iface != nil {
+			t.iface.WantsTunnel = false
+		}
+		t.wantsTunnel.Store(false)
+	}
 }
 
 func (t *TCPClientInterface) ProcessIncoming(data []byte) {

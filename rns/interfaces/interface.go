@@ -250,6 +250,9 @@ func (i *Interface) SetTCPClient(ci *TCPClientInterface) {
 		return
 	}
 	i.tcpClient = ci
+	if ci != nil {
+		ci.iface = i
+	}
 }
 
 func (i *Interface) SetTCPServer(s *TCPServerInterface) {

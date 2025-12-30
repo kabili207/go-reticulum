@@ -39,3 +39,44 @@ func TestTCPInterface_KISS_Escape(t *testing.T) {
 	}
 }
 
+func TestTCPClientInterface_SynthesizeTunnelIfNeeded_CallsTunnelSynthesizer(t *testing.T) {
+	oldSynth := TunnelSynthesizer
+	defer func() { TunnelSynthesizer = oldSynth }()
+
+	called := make(chan *Interface, 1)
+	TunnelSynthesizer = func(ifc *Interface) {
+		select {
+		case called <- ifc:
+		default:
+		}
+	}
+
+	ifc := &Interface{
+		Name:              "test",
+		Type:              "TCPClientInterface",
+		IN:                true,
+		OUT:               true,
+		DriverImplemented: true,
+		WantsTunnel:       true,
+	}
+	client := NewTCPClientInitiator(nil, nil, "test", "127.0.0.1", 1, false, false)
+	client.wantsTunnel.Store(true)
+	ifc.SetTCPClient(client)
+	client.synthesizeTunnelIfNeeded()
+
+	select {
+	case got := <-called:
+		if got != ifc {
+			t.Fatalf("TunnelSynthesizer got unexpected iface pointer: got=%p want=%p", got, ifc)
+		}
+	default:
+		t.Fatalf("TunnelSynthesizer was not called")
+	}
+
+	if client.WantsTunnel() {
+		t.Fatalf("wantsTunnel flag was not cleared")
+	}
+	if ifc.WantsTunnel {
+		t.Fatalf("interface WantsTunnel flag was not cleared")
+	}
+}
