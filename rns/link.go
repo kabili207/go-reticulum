@@ -1006,6 +1006,9 @@ func (l *Link) Receive(packet *Packet) {
 				cb(plaintext, packet)
 			}()
 		}
+		// Python parity: link data packets are always proven back to the sender to
+		// satisfy packet receipts, regardless of whether a packet callback is set.
+		l.ProvePacket(packet)
 		return
 	}
 

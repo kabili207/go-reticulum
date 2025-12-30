@@ -77,9 +77,20 @@ func newRequestReceipt(
 		}
 		rr.startedAt = time.Now()
 		packetReceipt.SetTimeout(timeout)
+		packetReceipt.SetDeliveryCallback(func(*PacketReceipt) {
+			rr.markDelivered()
+		})
 		packetReceipt.SetTimeoutCallback(func(*PacketReceipt) {
 			rr.requestTimedOut()
 		})
+		// In the in-process integration transport, the delivery proof can arrive
+		// synchronously during Packet.Send(), before we attach callbacks here.
+		// Mirror Python semantics by observing already-delivered receipts.
+		if packetReceipt.Status == ReceiptDelivered {
+			rr.markDelivered()
+		} else if packetReceipt.Status == ReceiptFailed {
+			rr.requestTimedOut()
+		}
 	}
 
 	link.addPendingRequest(rr)

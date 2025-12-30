@@ -208,8 +208,10 @@ func WithContextFlag(flag byte) PacketOption {
 // Python: Packet.TIMEOUT_PER_HOP = Reticulum.DEFAULT_PER_HOP_TIMEOUT
 const TimeoutPerHop = float64(DEFAULT_PER_HOP_TIMEOUT)
 
-// Python: Link.TRAFFIC_TIMEOUT_MIN_MS = 5
-const trafficTimeoutMin = 5 * time.Millisecond
+// Python parity: Link.TRAFFIC_TIMEOUT_MIN = 5 seconds.
+// This is a lower bound for per-packet receipt timeouts on links, ensuring that
+// early link RTT estimates (often 0 at startup) don't cause immediate timeouts.
+const trafficTimeoutMin = 5 * time.Second
 
 // ===== Минимальный интерфейс транспорта =====
 
