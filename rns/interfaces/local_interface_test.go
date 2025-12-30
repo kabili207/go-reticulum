@@ -1,6 +1,7 @@
 package interfaces
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,9 @@ func TestLocal_packetAddr_AFUnixAbstract(t *testing.T) {
 	if network != "unix" {
 		t.Fatalf("expected unix, got %q", network)
 	}
+	if runtime.GOOS != "linux" {
+		t.Skipf("abstract AF_UNIX addresses are Linux-only (got %s)", runtime.GOOS)
+	}
 	if !strings.HasPrefix(addr, "\x00rns/") {
 		t.Fatalf("expected abstract socket prefix, got %q", addr)
 	}
@@ -38,4 +42,3 @@ func TestLocal_packetAddr_TCPFallback(t *testing.T) {
 		t.Fatalf("unexpected tcp fallback: %s %q", network, addr)
 	}
 }
-

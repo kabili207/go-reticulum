@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -44,7 +45,8 @@ func packetAddr(cfg LocalConfig) (network, addr string) {
 	if socketName == "" {
 		socketName = "default"
 	}
-	if cfg.UseAFUnix && vendor.UseAFUnix() {
+	// Abstract AF_UNIX addresses ("\x00...") are only supported on Linux.
+	if cfg.UseAFUnix && vendor.UseAFUnix() && runtime.GOOS == "linux" {
 		return "unix", "\x00rns/" + socketName + "/local"
 	}
 	// Python falls back to TCP when AF_UNIX isn't used/available.
