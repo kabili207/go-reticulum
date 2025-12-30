@@ -10,8 +10,8 @@
   loglevel = 4
 
 [interfaces]
-  # Стартуемся без “физических” интерфейсов. Это удобно для тестов утилит,
-  # которым важен только shared instance (LocalInterface IPC).
+  # Start without any "physical" interfaces. Handy for CLI utility tests where
+  # only the shared instance (LocalInterface IPC) matters.
   [[Noop]]
     type = UDPInterface
     enabled = no
@@ -19,4 +19,3 @@
     listen_port = 0
     forward_ip = 127.0.0.1
     forward_port = 0
-

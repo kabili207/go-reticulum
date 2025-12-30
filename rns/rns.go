@@ -21,7 +21,7 @@ import (
 	platformutils "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
-// Версия библиотеки (подставь свою или генерируй при сборке).
+// Library version (set manually or generate at build time).
 var Version = "1.0.4"
 var compiledFlag = true
 
@@ -31,7 +31,7 @@ const (
 	identityAESBlockSize     = 16
 )
 
-// ---------- лог-уровни ----------
+// ---------- log levels ----------
 
 const (
 	LogNone     = -1
@@ -102,7 +102,7 @@ var (
 
 	phyParamsSnapshot = PhyLayerParams{}
 
-	// LinkMDU соответствует классическому Link.MDU из Python-порта.
+	// LinkMDU matches the classic Link.MDU from the Python implementation.
 	LinkMDU = computeLinkMDU(DefaultMTU)
 )
 
@@ -120,7 +120,7 @@ func seedRandom() int64 {
 	return time.Now().UnixNano()
 }
 
-// PhyLayerParams хранит значения, которые печатает PhyParams().
+// PhyLayerParams stores values printed by PhyParams().
 type PhyLayerParams struct {
 	PhysicalLayerMTU   int
 	PacketPlainMDU     int
@@ -131,7 +131,7 @@ type PhyLayerParams struct {
 	LinkPrivateKeyBits int
 }
 
-// ---------- служебные геттеры ----------
+// ---------- helper getters ----------
 
 func LogLevelName(level int) string {
 	switch level {
@@ -197,7 +197,7 @@ func SetLogFile(path string) {
 	alwaysOverrideDest = false
 }
 
-// SetLogDestFile — алиас для совместимости с кодом Reticulum.
+// SetLogDestFile is an alias for compatibility with Reticulum code.
 func SetLogDestFile(path string) {
 	SetLogFile(path)
 }
@@ -263,7 +263,7 @@ func LogTimeFormats() (standard string, precise string) {
 	return logTimeFmt, logTimeFmtPrec
 }
 
-// ---------- версия / платформа ----------
+// ---------- version / platform ----------
 
 func GetVersion() string { return Version }
 
@@ -291,7 +291,7 @@ func HostOS() string {
 	return platformutils.GetPlatform()
 }
 
-// ---------- время / форматирование времени ----------
+// ---------- time / formatting ----------
 
 func timestampStr(t time.Time) string {
 	return t.Format(logTimeFmt)
@@ -363,7 +363,7 @@ func normalizeTimeFormat(format string, precise bool) (layout string, trimMillis
 	return f, false
 }
 
-// ---------- основной логгер ----------
+// ---------- main logger ----------
 
 func Log(msg any, level int) {
 	logInternal(msg, level, false, false)
@@ -474,7 +474,7 @@ func appendLogFile(path, line string) error {
 	return os.Rename(path, prev)
 }
 
-// ---------- рандом ----------
+// ---------- random ----------
 
 func Rand() float64 {
 	randMu.Lock()
@@ -490,7 +490,7 @@ func TraceException(e any) {
 	Log(string(debug.Stack()), LogError)
 }
 
-// ---------- hex-представление ----------
+// ---------- hex representation ----------
 
 func HexRep(data any, delimit ...bool) string {
 	sep := ":"
@@ -644,7 +644,7 @@ func absInt64(v int64) int64 {
 	return v
 }
 
-// ---------- человекочитаемые размеры/скорости ----------
+// ---------- human-readable sizes/speeds ----------
 
 func PrettySize(num float64, suffix ...string) string {
 	suf := "B"
@@ -723,7 +723,7 @@ func PrettyDistance(m float64, suffix ...string) string {
 	return fmt.Sprintf("%.2f %s%s", num, lastUnit, suf)
 }
 
-// ---------- человекочитаемое время ----------
+// ---------- human-readable time ----------
 
 func PrettyTime(sec float64, verbose, compact bool) string {
 	neg := false
@@ -794,7 +794,7 @@ func PrettyTime(sec float64, verbose, compact bool) string {
 		return "0s"
 	}
 
-	// склеиваем "a, b and c"
+	// join "a, b and c"
 	out := ""
 	for i, c := range components {
 		switch {
@@ -814,7 +814,7 @@ func PrettyTime(sec float64, verbose, compact bool) string {
 }
 
 func PrettyShortTime(sec float64, verbose, compact bool) string {
-	// вход в секундах, внутри работаем в микросекундах
+	// input is seconds, internal is microseconds
 	neg := false
 	if sec < 0 {
 		neg = true
@@ -1118,7 +1118,7 @@ func resolvedPhyLayerParams() PhyLayerParams {
 
 // ---------- panic / exit ----------
 
-// ExitHandler можно установить из Reticulum, чтобы повторить exit_handler() в Python.
+// ExitHandler can be set by Reticulum to mirror Python's exit_handler().
 var ExitHandler func()
 
 // SetExitHandler registers a callback invoked before the process terminates via Exit().

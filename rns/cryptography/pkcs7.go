@@ -7,7 +7,7 @@ import (
 
 const PKCS7BlockSize = 16
 
-// PKCS7Pad аналог PKCS7.pad(data, bs=BLOCKSIZE)
+// PKCS7Pad mirrors PKCS7.pad(data, bs=BLOCKSIZE).
 func PKCS7Pad(data []byte, bs int) ([]byte, error) {
 	if bs <= 0 {
 		bs = PKCS7BlockSize
@@ -27,7 +27,7 @@ func PKCS7Pad(data []byte, bs int) ([]byte, error) {
 	return out, nil
 }
 
-// PKCS7Unpad аналог PKCS7.unpad(data, bs=BLOCKSIZE)
+// PKCS7Unpad mirrors PKCS7.unpad(data, bs=BLOCKSIZE).
 func PKCS7Unpad(data []byte, bs int) ([]byte, error) {
 	if bs <= 0 {
 		bs = PKCS7BlockSize

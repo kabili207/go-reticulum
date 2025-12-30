@@ -259,7 +259,7 @@ func programSetup(
 
 	interfaces := toIfaceSlice(ifacesAny)
 
-	// сортировка
+	// sorting
 	if sorting != "" {
 		sortKey := strings.ToLower(sorting)
 		sortInterfaces(interfaces, sortKey, !sortReverse)
@@ -664,7 +664,7 @@ func getRemoteStatus(destHash []byte, includeLstats bool, identity *rns.Identity
 			return
 		}
 
-		// ожидание: response — []any{stats, linkCount?}
+		// expected: response is []any{stats, linkCount?}
 		list, ok := resp.([]any)
 		if !ok || len(list) == 0 {
 			// Python treats this as invalid result and exits with code 2.
@@ -819,7 +819,7 @@ func abs(x float64) float64 {
 	return x
 }
 
-// сортировка по ключам трафика/битрейта/анонсов
+// sort by traffic/bitrate/announce keys
 func sortInterfaces(ifs []map[string]any, key string, desc bool) {
 	less := func(i, j int) bool {
 		a := ifs[i]

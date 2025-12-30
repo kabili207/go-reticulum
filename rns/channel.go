@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ====== системные типы сообщений =============================================
+// ====== system message types ================================================
 
 type SystemMessageTypes uint16
 
@@ -18,7 +18,7 @@ const (
 	SMT_STREAM_DATA SystemMessageTypes = 0xff00
 )
 
-// ====== базовый транспорт ====================================================
+// ====== base transport =======================================================
 
 type ChannelOutletBase interface {
 	Send(raw []byte) any
@@ -38,7 +38,7 @@ type ChannelOutletBase interface {
 	GetPacketID(packet any) any
 }
 
-// ====== ошибки ===============================================================
+// ====== errors ===============================================================
 
 type CEType int
 
@@ -60,7 +60,7 @@ func (e *ChannelException) Error() string {
 	return e.Msg
 }
 
-// ====== состояние сообщения ==================================================
+// ====== message state ========================================================
 
 type MessageState int
 
@@ -71,7 +71,7 @@ const (
 	MSGSTATE_FAILED    MessageState = 3
 )
 
-// ====== базовый интерфейс сообщения ==========================================
+// ====== base message interface ==============================================
 
 type MessageBase interface {
 	Pack() ([]byte, error)
@@ -79,7 +79,7 @@ type MessageBase interface {
 	MsgType() uint16
 }
 
-// ====== callback для сообщений ===============================================
+// ====== message callback =====================================================
 
 type MessageCallbackType func(MessageBase) bool
 
@@ -197,7 +197,7 @@ func (c *Channel) log(level int, format string, args ...any) {
 	Log(fmt.Sprintf("%s: %s", c.label(), fmt.Sprintf(format, args...)), level)
 }
 
-// константы окна и последовательностей
+// window and sequence constants
 
 const (
 	Window             = 2
@@ -218,7 +218,7 @@ const (
 	SeqModulus         = SeqMax + 1
 )
 
-// NewChannel — аналог __init__
+// NewChannel mirrors __init__.
 
 func NewChannel(outlet ChannelOutletBase) *Channel {
 	c := &Channel{
@@ -245,7 +245,7 @@ func NewChannel(outlet ChannelOutletBase) *Channel {
 	return c
 }
 
-// String предоставляет идентификатор канала, аналог __str__ в Python.
+// String returns a channel identifier (mirrors Python __str__).
 func (c *Channel) String() string {
 	c.nameOnce.Do(func() {
 		if c.outlet != nil {
@@ -260,7 +260,7 @@ func (c *Channel) String() string {
 	return c.nameCache
 }
 
-// Close освобождает ресурсы канала (снятие callback'ов, очистка очередей)
+// Close releases channel resources (unregister callbacks, clear queues).
 func (c *Channel) Close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -272,13 +272,13 @@ func (c *Channel) Close() {
 	c.messageCallbacks = nil
 }
 
-// RegisterMessageType — публичный метод
+// RegisterMessageType is the public registration method.
 
 func (c *Channel) RegisterMessageType(msg MessageBase) error {
 	return c._register_message_type(msg, false)
 }
 
-// _register_message_type — внутренний
+// _register_message_type is internal.
 
 func (c *Channel) _register_message_type(msg MessageBase, isSystemType bool) error {
 	c.lock.Lock()
@@ -302,7 +302,7 @@ func (c *Channel) _register_message_type(msg MessageBase, isSystemType bool) err
 		}
 	}
 
-	// создаём фабрику через reflect по типу msg
+	// build a factory via reflect on the message type
 	t := reflect.TypeOf(msg)
 	if t.Kind() != reflect.Ptr {
 		return &ChannelException{
@@ -325,7 +325,7 @@ func (c *Channel) _register_message_type(msg MessageBase, isSystemType bool) err
 		return v.Interface().(MessageBase) // safe due to Implements check above
 	}
 
-	// пробный конструктор (как в Python)
+	// test constructor (like Python)
 	var ctorPanic any
 	func() {
 		defer func() {
@@ -424,7 +424,7 @@ func (c *Channel) setMessageStateLocked(seq uint16, state MessageState) {
 	c.messageStates[seq] = state
 }
 
-// вставка конверта в кольцо по sequence
+// insert envelope into the ring by sequence
 
 func (c *Channel) emplaceEnvelope(env *Envelope, ring *[]*Envelope) bool {
 	i := 0
@@ -469,7 +469,7 @@ func (c *Channel) runCallbacks(msg MessageBase) {
 	}
 }
 
-// Receive — аналог _receive(self, raw)
+// Receive mirrors _receive(self, raw).
 
 func (c *Channel) Receive(raw []byte) {
 	defer func() {
@@ -563,7 +563,7 @@ func (c *Channel) Receive(raw []byte) {
 	}
 }
 
-// IsReadyToSend — аналог is_ready_to_send()
+// IsReadyToSend mirrors is_ready_to_send().
 
 func (c *Channel) IsReadyToSend() bool {
 	if !c.outlet.IsUsable() {
@@ -587,7 +587,7 @@ func (c *Channel) isReadyToSendLocked() bool {
 	return outstanding < c.window
 }
 
-// ====== таймауты/доставка ====================================================
+// ====== timeouts/delivery ====================================================
 
 func (c *Channel) packetTxOp(packet any, op func(*Envelope) (bool, *MessageState)) {
 	c.lock.Lock()
@@ -774,7 +774,7 @@ func (c *Channel) Send(message MessageBase) (*Envelope, error) {
 	return env, nil
 }
 
-// Mdu — аналог @property mdu
+// Mdu mirrors @property mdu.
 
 func (c *Channel) Mdu() int {
 	mdu := c.outlet.Mdu() - 6

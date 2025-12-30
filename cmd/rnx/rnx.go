@@ -161,7 +161,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// positional args: destination, command (как в Python)
+	// positional args: destination, command (like Python)
 	if destHex == "" && fs.NArg() >= 1 {
 		destHex = fs.Arg(0)
 	}
@@ -193,7 +193,7 @@ func main() {
 		return
 	}
 
-	// обычный/интерактивный режим
+	// normal/interactive mode
 	if destHex != "" && command != "" {
 		code := execute(
 			configDirOrNil(configDir),

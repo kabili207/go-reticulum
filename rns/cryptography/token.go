@@ -19,9 +19,9 @@ const (
 	key256Size = 64 // 32+32
 )
 
-// GenerateKey аналог Token.generate_key(mode=AES_256_CBC по умолчанию)
-// modeBytes = 16 → AES-128 (итоговый ключ 32 байта)
-// modeBytes = 32 → AES-256 (итоговый ключ 64 байта)
+// GenerateKey mirrors Token.generate_key(mode=AES_256_CBC by default).
+// aesKeyBytes = 16 -> AES-128 (final key 32 bytes)
+// aesKeyBytes = 32 -> AES-256 (final key 64 bytes)
 func GenerateKey(aesKeyBytes int) ([]byte, error) {
 	var total int
 	switch aesKeyBytes {
@@ -46,7 +46,7 @@ type Token struct {
 	aesKeySize    int // 16 or 32
 }
 
-// New аналог __init__(key, mode=AES)
+// NewToken mirrors __init__(key, mode=AES).
 func NewToken(key []byte) (*Token, error) {
 	if key == nil {
 		return nil, errors.New("token key cannot be nil")
@@ -70,7 +70,7 @@ func NewToken(key []byte) (*Token, error) {
 	}
 }
 
-// verifyHMAC аналог verify_hmac()
+// verifyHMAC mirrors verify_hmac().
 func (t *Token) verifyHMAC(tok []byte) bool {
 	if len(tok) <= hmacSize {
 		return false
@@ -86,7 +86,7 @@ func (t *Token) verifyHMAC(tok []byte) bool {
 	return hmac.Equal(rec, exp)
 }
 
-// Encrypt аналог encrypt()
+// Encrypt mirrors encrypt().
 func (t *Token) Encrypt(data []byte) ([]byte, error) {
 	if data == nil {
 		return nil, errors.New("plaintext cannot be nil")
@@ -120,7 +120,7 @@ func (t *Token) Encrypt(data []byte) ([]byte, error) {
 	return append(signedParts, sig...), nil
 }
 
-// Decrypt аналог decrypt()
+// Decrypt mirrors decrypt().
 func (t *Token) Decrypt(tok []byte) ([]byte, error) {
 	if tok == nil {
 		return nil, errors.New("token cannot be nil")

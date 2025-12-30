@@ -8,7 +8,7 @@ import (
 
 const BlockSize = aes.BlockSize // 16
 
-// AES128CBC.encrypt / decrypt эквивалент Python AES_128_CBC
+// AES128CBCEncrypt/AES128CBCDecrypt are equivalent to Python AES_128_CBC.
 func AES128CBCEncrypt(plaintext, key, iv []byte) ([]byte, error) {
 	if len(key) != 16 {
 		return nil, fmt.Errorf("%w: %d bytes", fmt.Errorf("invalid AES key length"), len(key))
@@ -55,7 +55,7 @@ func AES128CBCDecrypt(ciphertext, key, iv []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// AES256CBC.encrypt / decrypt эквивалент Python AES_256_CBC
+// AES256CBCEncrypt/AES256CBCDecrypt are equivalent to Python AES_256_CBC.
 func AES256CBCEncrypt(plaintext, key, iv []byte) ([]byte, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("%w: %d bytes", fmt.Errorf("invalid AES key length"), len(key))

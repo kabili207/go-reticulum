@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ===== Типы пакетов =====
+// ===== Packet types =====
 
 const (
 	PacketTypeData        = 0x00
@@ -15,13 +15,13 @@ const (
 	PacketTypeProof       = 0x03
 )
 
-// Типы заголовка
+// Header types
 const (
 	HeaderType1 = 0x00
 	HeaderType2 = 0x01
 )
 
-// Контексты
+// Contexts
 const (
 	PacketCtxNone          = 0x00
 	PacketCtxResource      = 0x01
@@ -46,7 +46,7 @@ const (
 	PacketCtxLRProof       = 0xFF
 )
 
-// Флаги контекста
+// Context flags
 const (
 	FlagSet   = 0x01
 	FlagUnset = 0x00
@@ -213,7 +213,7 @@ const TimeoutPerHop = float64(DEFAULT_PER_HOP_TIMEOUT)
 // early link RTT estimates (often 0 at startup) don't cause immediate timeouts.
 const trafficTimeoutMin = 5 * time.Second
 
-// ===== Минимальный интерфейс транспорта =====
+// ===== Minimal transport interface =====
 
 type TransportBackend interface {
 	Outbound(p *Packet) bool
@@ -224,7 +224,7 @@ type TransportBackend interface {
 	GetPacketQ(hash []byte) *float64
 }
 
-// Должен быть инициализирован снаружи
+// Must be initialised externally.
 var Transport TransportBackend
 
 // ===== Packet =====
@@ -350,7 +350,7 @@ func NewPacket(target interface{}, data []byte, opts ...PacketOption) *Packet {
 
 func (p *Packet) getPackedFlags() byte {
 	if p.Context == PacketCtxLRProof {
-		// LINK всегда для LRPROOF
+		// LINK is always for LRPROOF
 		return (p.HeaderType << 6) |
 			(p.ContextFlag << 5) |
 			(p.TransportType << 4) |
@@ -370,7 +370,7 @@ func (p *Packet) getPackedFlags() byte {
 		p.PacketType
 }
 
-// Pack — эквивалент pack()
+// Pack mirrors pack().
 func (p *Packet) Pack() error {
 	if p.Destination == nil && p.Link == nil {
 		return errors.New("cannot pack packet without destination")
@@ -480,11 +480,11 @@ func (p *Packet) encryptForDestination(plaintext []byte) ([]byte, error) {
 	return ct, nil
 }
 
-// Unpack — эквивалент unpack()
+// Unpack mirrors unpack().
 func (p *Packet) Unpack() bool {
 	defer func() {
 		if r := recover(); r != nil {
-			// проглатываем как в Python, просто false
+			// swallow like Python, just return false
 		}
 	}()
 
@@ -527,7 +527,7 @@ func (p *Packet) Unpack() bool {
 	return true
 }
 
-// Send — эквивалент send()
+// Send mirrors send().
 func (p *Packet) Send() *PacketReceipt {
 	if p.Sent {
 		Log("Attempt to resend an already sent packet", LogError)
@@ -540,7 +540,7 @@ func (p *Packet) Send() *PacketReceipt {
 	if p.Link != nil {
 		if p.Link.Status == LinkClosed {
 			Log("Attempt to transmit over a closed link, dropping packet", LogDebug)
-			// просто выходим
+			// just exit
 			p.Sent = false
 			p.Receipt = nil
 			return nil
@@ -571,7 +571,7 @@ func (p *Packet) Send() *PacketReceipt {
 	return nil
 }
 
-// Resend — эквивалент resend()
+// Resend mirrors resend().
 func (p *Packet) Resend() *PacketReceipt {
 	if !p.Sent {
 		Log("Attempt to resend a packet that was not sent yet", LogError)
@@ -666,7 +666,7 @@ func (p *Packet) RawBytes() []byte {
 	return copyBytes(p.Raw)
 }
 
-// Метрики
+// Metrics
 
 func (p *Packet) GetRSSI() *float64 {
 	if p.RSSI != nil {
@@ -919,7 +919,7 @@ func (r *PacketReceipt) SetTimeoutCallback(cb func(*PacketReceipt)) {
 	r.Callbacks.Timeout = cb
 }
 
-// ===== небольшие утилиты =====
+// ===== small utilities =====
 
 func maxFloat(a, b float64) float64 {
 	if a > b {

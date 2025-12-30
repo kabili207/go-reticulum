@@ -14,7 +14,7 @@ func hkdfHmacSHA256(key, data []byte) []byte {
 	return m.Sum(nil)
 }
 
-// HKDF — эквивалент hkdf() из HKDF.py
+// HKDF mirrors hkdf() from HKDF.py.
 func HKDF(length int, deriveFrom, salt, context []byte) ([]byte, error) {
 	if length < 1 {
 		return nil, errors.New("hkdf: invalid output key length")
@@ -43,7 +43,7 @@ func HKDF(length int, deriveFrom, salt, context []byte) ([]byte, error) {
 		mac := hmac.New(sha256.New, pseudorandomKey)
 		mac.Write(block)
 		mac.Write(context)
-		mac.Write([]byte{byte((i + 1) % 256)}) // (i+1)%(0xFF+1) как в Python
+		mac.Write([]byte{byte((i + 1) % 256)}) // (i+1)%(0xFF+1) like Python
 		block = mac.Sum(nil)
 		derived = append(derived, block...)
 	}

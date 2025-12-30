@@ -234,7 +234,7 @@ func (l *Link) observeRTTSeconds(sec float64) {
 	l.observeRTT(time.Duration(sec * float64(time.Second)))
 }
 
-// ==== Создание ссылок ====
+// ==== Link creation ====
 
 func NewLink(destination *Destination, owner *Destination, mode int, establishedCB, closedCB func(*Link)) (*Link, error) {
 	if mode < 0 {
@@ -409,7 +409,7 @@ func (l *Link) SetRemoteIdentifiedCallback(cb func(*Link, *Identity)) {
 	l.callbacks.RemoteIdentified = cb
 }
 
-// Channel возвращает (и при необходимости создаёт) канал для линка.
+// Channel returns (and lazily creates) the channel for this link.
 func (l *Link) Channel() *Channel {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -538,7 +538,7 @@ func (l *Link) SetResourceStrategy(strategy int) error {
 	return nil
 }
 
-// ==== Работа с ресурсами ====
+// ==== Resource handling ====
 
 func (l *Link) RegisterIncomingResource(res *Resource) {
 	if res == nil {
@@ -895,7 +895,7 @@ func (l *Link) responseResourceProgress(res *Resource) {
 	pending.responseResourceProgress(res)
 }
 
-// ==== Валидация входящих запросов ====
+// ==== Incoming request validation ====
 
 func LinkValidateRequest(owner *Destination, data []byte, packet *Packet) *Link {
 	if owner == nil {
@@ -1350,7 +1350,7 @@ func (l *Link) handleLRRTT(packet *Packet) {
 	}
 }
 
-// ==== Крипто и служебные методы ====
+// ==== Crypto and helper methods ====
 
 func (l *Link) loadPeer(pub, sig []byte) error {
 	if len(pub) == 0 || len(sig) == 0 {
@@ -2129,7 +2129,7 @@ func (l *Link) sendChannelPacket(raw []byte) *Packet {
 	return packet
 }
 
-// ==== вспомогательные функции ====
+// ==== helper functions ====
 
 func bytesFromAny(v any) []byte {
 	switch val := v.(type) {

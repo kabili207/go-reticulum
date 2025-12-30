@@ -12,7 +12,7 @@ import (
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
-// ---- вспомогательные типы ----
+// ---- helper types ----
 
 type Callbacks struct {
 	LinkEstablished func(*Link)
@@ -59,13 +59,13 @@ type RequestHandler struct {
 	ResponseGen  func(path string, data any, requestID []byte, linkID []byte, remoteIdentity *Identity, requestedAt time.Time) any
 	AllowPolicy  int
 	AllowedList  [][]byte
-	AutoCompress interface{} // bool или int
+	AutoCompress interface{} // bool or int
 }
 
 // ---- Destination ----
 
 type Destination struct {
-	// конфигурация
+	// configuration
 	Type      int
 	Direction int
 
@@ -93,7 +93,7 @@ type Destination struct {
 	latestRatchetID   []byte
 	enforceRatchets   bool
 
-	// прочее
+	// misc
 	mtu             int
 	pathResponses   map[string]*pathResponseEntry
 	requestHandlers map[string]*RequestHandler
@@ -110,7 +110,7 @@ type pathResponseEntry struct {
 	Data      []byte
 }
 
-// ---- статические хелперы (как @staticmethod в Python) ----
+// ---- static helpers (like @staticmethod in Python) ----
 
 // ExpandName = Destination.expand_name(...)
 func DestinationExpandName(identity *Identity, appName string, aspects ...string) (string, error) {
@@ -198,7 +198,7 @@ func HashFromNameAndIdentity(fullName string, identityHash []byte) []byte {
 	return out
 }
 
-// ---- конструктор ----
+// ---- constructor ----
 
 func NewDestination(identity *Identity, direction int, dstType int, appName string, aspects ...string) (*Destination, error) {
 	if containsDot(appName) {
@@ -264,15 +264,15 @@ func NewDestination(identity *Identity, direction int, dstType int, appName stri
 		return nil, err
 	}
 	d.nameHash = FullHash([]byte(nameWithoutIdentity))[:IdentityNameHashLength/8]
-	d.hexhash = PrettyHexRep(hash) // или hex.EncodeToString(hash)
+	d.hexhash = PrettyHexRep(hash) // or hex.EncodeToString(hash)
 
-	// регистрация
+	// registration
 	TransportRegisterDestination(d)
 
 	return d, nil
 }
 
-// ---- методы ----
+// ---- methods ----
 
 func (d *Destination) String() string {
 	return "<" + d.name + ":" + d.hexhash + ">"
@@ -334,7 +334,7 @@ func (d *Destination) IncomingLinkRequest(data []byte, packet *Packet) {
 	d.linksMu.Unlock()
 }
 
-// внутреннее
+// internal
 func (d *Destination) cleanRatchets() {
 	if d.ratchets != nil && len(d.ratchets) > d.retainedRatchets {
 		if len(d.ratchets) > DestinationRATCHET_COUNT {
@@ -428,7 +428,7 @@ func (d *Destination) Announce(appData []byte, pathResponse bool, attachedInterf
 	var ratchetPub []byte
 	now := float64(time.Now().Unix())
 
-	// чистим старые path_responses
+	// purge old path_responses
 	for k, v := range d.pathResponses {
 		if now > v.Timestamp+DestinationPR_TAG_WINDOW {
 			delete(d.pathResponses, k)
@@ -978,9 +978,9 @@ func (d *Destination) removeLink(target *Link) {
 	}
 }
 
-// ---- мелкие утилиты ----
+// ---- small utilities ----
 
-// в реальном коде замени на strings.Contains(appName, ".")
+// In real code, replace with strings.Contains(appName, ".").
 func containsDot(s string) bool {
 	for _, r := range s {
 		if r == '.' {
@@ -999,7 +999,7 @@ func containsInt(v int, arr []int) bool {
 	return false
 }
 
-// простая альтернатива full_name.split(".")
+// Simple alternative to full_name.split(".").
 func splitDot(s string) []string {
 	out := []string{""}
 	for _, r := range s {
@@ -1012,7 +1012,7 @@ func splitDot(s string) []string {
 	return out
 }
 
-// заглушка для GROUP Token
+// Stub for GROUP Token.
 func (d *Destination) getToken() (*Cryptography.Token, bool) {
 	d.groupTokenMu.Lock()
 	defer d.groupTokenMu.Unlock()

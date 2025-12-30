@@ -7,7 +7,7 @@ import (
 )
 
 func GetPlatform() string {
-	// как в Python: сначала руками детектим Android по env
+	// Like Python: detect Android via environment variables first.
 	if _, ok := os.LookupEnv("ANDROID_ARGUMENT"); ok {
 		return "android"
 	}
@@ -15,7 +15,7 @@ func GetPlatform() string {
 		return "android"
 	}
 
-	// дальше просто runtime.GOOS: "linux", "darwin", "windows", ...
+	// Then fall back to runtime.GOOS: "linux", "darwin", "windows", ...
 	return runtime.GOOS
 }
 
@@ -45,16 +45,15 @@ func UseAFUnix() bool {
 	return IsLinux() || IsAndroid() || IsDarwin()
 }
 
-// PlatformChecks – в Python проверял версию интерпретатора на Windows.
-// В Go это особо не нужно, но оставим хук на всякий случай.
+// PlatformChecks: Python checked interpreter versions on Windows.
+// In Go this is mostly unnecessary, but keep a hook just in case.
 func PlatformChecks() {
 	if IsWindows() {
-		// если надо – можно тут проверять версию Go или окружение
-		// сейчас просто no-op
+		// If needed, check Go runtime or environment here; currently a no-op.
 	}
 }
 
-// CryptographyOldAPI в Go не имеет смысла, заглушка на будущее.
+// CryptographyOldAPI is not meaningful in Go; kept as a future stub.
 func CryptographyOldAPI() bool {
 	return false
 }

@@ -254,7 +254,7 @@ func (t *TCPClientInterface) InitialConnect(ctx context.Context) {
 		return
 	}
 	go t.readLoop()
-	// python: если не KISS, wants_tunnel = True (тут оставлено на уровень выше)
+	// Python: if not KISS, wants_tunnel = True (handled at a higher level).
 }
 
 func (t *TCPClientInterface) connect(ctx context.Context, initial bool) bool {
@@ -381,7 +381,7 @@ func (t *TCPClientInterface) ProcessOutgoing(data []byte) error {
 	defer t.writeMutex.Unlock()
 
 	t.writing.Store(true)
-	_, err := c.Write(framed) // net.Conn.Write обычно пишет всё или ошибку
+	_, err := c.Write(framed) // net.Conn.Write typically writes all or returns an error
 	t.writing.Store(false)
 
 	if err != nil {
@@ -405,7 +405,7 @@ func (t *TCPClientInterface) WantsTunnel() bool {
 }
 
 func (t *TCPClientInterface) readLoop() {
-	// чтобы не запустить дважды
+	// avoid running twice
 	called := false
 	t.readOnce.Do(func() { called = true })
 	if !called {
@@ -436,7 +436,7 @@ func (t *TCPClientInterface) readLoop() {
 		n, err := c.Read(buf)
 		if err != nil {
 			if errors.Is(err, io.EOF) || t.detached.Load() {
-				// как python: socket closed
+				// like Python: socket closed
 			} else if t.Log != nil {
 				t.Log.Warnf("An interface error occurred for %s: %v", t.String(), err)
 			}
@@ -472,7 +472,7 @@ func (t *TCPClientInterface) readLoop() {
 		chunk := buf[:n]
 
 		if t.KISSFraming {
-			// bytewise parser, как в python
+			// bytewise parser, like Python
 			for i := 0; i < len(chunk); i++ {
 				b := chunk[i]
 				if inFrame && b == KISS_FEND && command == KISS_CMD_DATA {
@@ -510,35 +510,35 @@ func (t *TCPClientInterface) readLoop() {
 				}
 			}
 		} else {
-			// HDLC framing: накапливаем и вырезаем FLAG..FLAG
+			// HDLC framing: accumulate and extract FLAG..FLAG
 			frameBuf.Write(chunk)
 
 			for {
 				all := frameBuf.Bytes()
 				start := bytes.IndexByte(all, HDLC_FLAG)
 				if start < 0 {
-					// ничего полезного
+					// nothing useful
 					frameBuf.Reset()
 					break
 				}
 				end := bytes.IndexByte(all[start+1:], HDLC_FLAG)
 				if end < 0 {
-					// ждём второй флаг
+					// wait for the second flag
 					if start > 0 {
-						frameBuf.Next(start) // выброс мусора до первого флага
+						frameBuf.Next(start) // drop garbage before the first flag
 					}
 					break
 				}
 				end = start + 1 + end
 				frame := append([]byte(nil), all[start+1:end]...)
 
-				// unescape как в python replace-парами
+				// unescape like Python (replace in pairs)
 				frame = bytes.ReplaceAll(frame, []byte{HDLC_ESC, HDLC_FLAG ^ HDLC_ESC_MASK}, []byte{HDLC_FLAG})
 				frame = bytes.ReplaceAll(frame, []byte{HDLC_ESC, HDLC_ESC ^ HDLC_ESC_MASK}, []byte{HDLC_ESC})
 
-				// python: если len(frame) > HEADER_MINSIZE -> process
+				// Python: if len(frame) > HEADER_MINSIZE -> process
 				if HeaderMinSize > 0 && len(frame) <= HeaderMinSize {
-					// Отрезаем обработанную часть буфера, иначе зациклится на том же фрейме.
+					// Drop processed bytes, otherwise we'll loop on the same frame.
 					// Python: frame_buffer = frame_buffer[frame_end:]
 					frameBuf.Next(end)
 					continue
@@ -547,7 +547,7 @@ func (t *TCPClientInterface) readLoop() {
 					t.ProcessIncoming(frame)
 				}
 
-				// отрезаем до end (оставляем end как новый старт, как python frame_buffer = frame_buffer[frame_end:])
+				// truncate up to end (keep end as the new start, like Python frame_buffer = frame_buffer[frame_end:])
 				frameBuf.Next(end)
 			}
 		}
@@ -564,7 +564,7 @@ func (t *TCPClientInterface) teardown() {
 	t.conn = nil
 	t.mu.Unlock()
 
-	// если spawned у сервера — убрать из списка
+	// if spawned by the server, remove from the list
 	if t.parent != nil {
 		t.parent.removeClient(t)
 	}
@@ -577,7 +577,7 @@ type TCPServerInterface struct {
 
 	Name string
 
-	ListenAddr  string // "ip:port" или "[ip%if]:port"
+	ListenAddr  string // "ip:port" or "[ip%if]:port"
 	I2PTunneled bool
 	KISSFraming bool
 
@@ -861,7 +861,7 @@ func (s *TCPServerInterface) Detach() {
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}
-	// закрыть клиентов
+	// close clients
 	s.mu.Lock()
 	cs := append([]*TCPClientInterface(nil), s.clients...)
 	s.clients = nil

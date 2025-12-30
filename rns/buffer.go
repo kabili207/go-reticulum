@@ -54,7 +54,7 @@ func NewStreamDataMessage(streamID int, data []byte, eof bool, compressed bool) 
 	return m, nil
 }
 
-// Pack аналог pack(self) -> bytes
+// Pack mirrors Python pack(self) -> bytes.
 func (m *StreamDataMessage) Pack() ([]byte, error) {
 	// header_val = (0x3fff & stream_id) | (0x8000 if eof else 0) | (0x4000 if compressed else 0)
 	headerVal := (0x3fff & int(m.StreamID))
@@ -71,7 +71,7 @@ func (m *StreamDataMessage) Pack() ([]byte, error) {
 	return buf, nil
 }
 
-// Unpack аналог unpack(self, raw)
+// Unpack mirrors Python unpack(self, raw).
 func (m *StreamDataMessage) Unpack(raw []byte) error {
 	if len(raw) < 2 {
 		return errors.New("stream data too short")
@@ -157,7 +157,7 @@ func (r *RawChannelReader) RemoveReadyCallback(cb ReadyCallback) {
 	}
 }
 
-// аналог _handle_message(self, message)
+// Mirrors Python _handle_message(self, message).
 func (r *RawChannelReader) handleMessage(msg MessageBase) bool {
 	sdm, ok := msg.(*StreamDataMessage)
 	if !ok {
@@ -201,7 +201,7 @@ func (r *RawChannelReader) handleMessage(msg MessageBase) bool {
 	return true
 }
 
-// аналог _read(self, __size)
+// Mirrors Python _read(self, __size).
 func (r *RawChannelReader) readN(size int, block bool) ([]byte, bool, bool) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -228,7 +228,7 @@ func (r *RawChannelReader) readN(size int, block bool) ([]byte, bool, bool) {
 	return res, true, false
 }
 
-// Read реализует io.Reader (аналог readinto)
+// Read implements io.Reader (mirrors Python readinto).
 func (r *RawChannelReader) Read(p []byte) (int, error) {
 	data, ok, eof := r.readN(len(p), true)
 	if data == nil && eof {
@@ -341,7 +341,7 @@ func NewRawChannelWriter(streamID int, ch *Channel) *RawChannelWriter {
 	}
 }
 
-// Write аналог write(self, __b)
+// Write mirrors Python write(self, __b).
 func (w *RawChannelWriter) Write(b []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -793,7 +793,7 @@ func (rw *ChannelBufferedReadWriter) RawWriter() *RawChannelWriter {
 	return rw.writer.Raw()
 }
 
-// CreateReader аналог Buffer.create_reader(...)
+// CreateReader mirrors Buffer.create_reader(...).
 func CreateReader(streamID int, ch *Channel, readyCallback ReadyCallback) *ChannelBufferedReader {
 	reader := NewRawChannelReader(streamID, ch)
 	if readyCallback != nil {
@@ -804,7 +804,7 @@ func CreateReader(streamID int, ch *Channel, readyCallback ReadyCallback) *Chann
 	}
 }
 
-// CreateWriter аналог Buffer.create_writer(...)
+// CreateWriter mirrors Buffer.create_writer(...).
 func CreateWriter(streamID int, ch *Channel) *ChannelBufferedWriter {
 	writer := NewRawChannelWriter(streamID, ch)
 	return &ChannelBufferedWriter{
@@ -812,7 +812,7 @@ func CreateWriter(streamID int, ch *Channel) *ChannelBufferedWriter {
 	}
 }
 
-// CreateBidirectionalBuffer аналог create_bidirectional_buffer(...)
+// CreateBidirectionalBuffer mirrors create_bidirectional_buffer(...).
 func CreateBidirectionalBuffer(
 	receiveStreamID int,
 	sendStreamID int,

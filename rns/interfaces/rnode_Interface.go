@@ -120,7 +120,7 @@ const (
 )
 
 func kissEscape(in []byte) []byte {
-	// как в питоне: 0xDB->0xDB 0xDD, 0xC0->0xDB 0xDC
+	// Like Python: 0xDB->0xDB 0xDD, 0xC0->0xDB 0xDC
 	out := make([]byte, 0, len(in)+8)
 	for _, b := range in {
 		switch b {
@@ -147,7 +147,7 @@ func kissUnescapeStream(dst *bytes.Buffer, b byte, esc *bool) {
 		case TFESC:
 			dst.WriteByte(FESC)
 		default:
-			dst.WriteByte(b) // “как есть”, на всякий
+			dst.WriteByte(b) // "as-is", just in case
 		}
 		*esc = false
 		return
@@ -422,7 +422,7 @@ type RNodeInterface struct {
 	repCR    atomic.Bool
 	repState atomic.Bool
 
-	// stats (часть)
+	// stats (partial)
 	rssi    int32
 	snr     float32
 	qSNR    float32
@@ -824,7 +824,7 @@ func (r *RNodeInterface) makeKISSFrame(cmd byte, data []byte) []byte {
 
 // -------- commands ----------
 func (r *RNodeInterface) Detect() error {
-	// как в питоне: FEND, CMD_DETECT, DETECT_REQ, FEND, CMD_FW_VERSION, 0x00, FEND, CMD_PLATFORM, 0x00, FEND, CMD_MCU, 0x00, FEND
+	// Like Python: FEND, CMD_DETECT, DETECT_REQ, FEND, CMD_FW_VERSION, 0x00, FEND, CMD_PLATFORM, 0x00, FEND, CMD_MCU, 0x00, FEND
 	buf := []byte{FEND, CMD_DETECT, DETECT_REQ, FEND, CMD_FW_VERSION, 0x00, FEND, CMD_PLATFORM, 0x00, FEND, CMD_MCU, 0x00, FEND}
 	r.detected.Store(false)
 	r.writeMu.Lock()
@@ -1055,7 +1055,7 @@ func (r *RNodeInterface) readLoop() {
 			case CMD_DATA:
 				kissUnescapeStream(&dataBuf, b, &escape)
 			default:
-				// большинство команд собираются в cmdBuf (с unescape)
+				// most commands accumulate in cmdBuf (with unescape)
 				kissUnescapeStream(&cmdBuf, b, &escape)
 				r.tryConsumeCmd(cmd, &cmdBuf)
 			}
@@ -1073,7 +1073,7 @@ func (r *RNodeInterface) onData(p []byte) {
 		cp := append([]byte(nil), p...)
 		r.Owner.Inbound(cp, r)
 	}
-	// как в питоне: обнуляет RSSI/SNR “после приёма”
+	// Like Python: resets RSSI/SNR after reception
 	r.rssi = 0
 	r.snr = 0
 	r.repStatRSSI.Store(false)
@@ -1081,7 +1081,7 @@ func (r *RNodeInterface) onData(p []byte) {
 }
 
 func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
-	// В питоне команды “срабатывают” когда cmdBuf достиг нужной длины.
+	// In Python, commands "fire" once cmdBuf reaches the expected length.
 	switch cmd {
 	case CMD_FREQUENCY:
 		if buf.Len() == 4 {
@@ -1270,7 +1270,7 @@ func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
 			buf.Reset()
 		}
 	case CMD_READY:
-		// python: сразу process_queue()
+		// Python: call process_queue() immediately
 		r.flushOne()
 		buf.Reset()
 	case CMD_DETECT:
@@ -1323,10 +1323,10 @@ func (r *RNodeInterface) tryConsumeCmd(cmd byte, buf *bytes.Buffer) {
 			r.displayBuf = append([]byte(nil), buf.Bytes()...)
 			buf.Reset()
 		}
-	// Остальные (STAT_CHTM/PHYPRM/CSMA/BAT/TEMP/FB/DISP) добавляются аналогично:
-	// просто “если len==N -> распарсил -> buf.Reset()”
+	// The rest (STAT_CHTM/PHYPRM/CSMA/BAT/TEMP/FB/DISP) is added similarly:
+	// just "if len==N -> parse -> buf.Reset()"
 	default:
-		// ничего
+		// nothing
 	}
 }
 

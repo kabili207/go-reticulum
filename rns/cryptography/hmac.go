@@ -5,7 +5,7 @@ import (
 	"hash"
 )
 
-// предвычисленные XOR-таблицы как в Python: trans_5C и trans_36
+// Precomputed XOR tables like Python: trans_5C and trans_36.
 var (
 	trans5C [256]byte
 	trans36 [256]byte
@@ -19,14 +19,14 @@ func init() {
 }
 
 type HMAC struct {
-	key        []byte // нормализованный и допадденный ключ
-	blockSize  int    // эффективный block_size
-	digestSize int    // размер дайджеста
+	key        []byte // normalized and zero-padded key
+	blockSize  int    // effective block_size
+	digestSize int    // digest size
 	digestmod  func() hash.Hash
-	data       []byte // все msg, полученные через Update
+	data       []byte // all message chunks received via Update
 }
 
-// New — аналог new(key, msg=None, digestmod=sha256)
+// NewHMAC mirrors new(key, msg=None, digestmod=sha256).
 func NewHMAC(key, msg []byte, digestmod func() hash.Hash) *HMAC {
 	if digestmod == nil {
 		digestmod = sha256.New
@@ -35,17 +35,17 @@ func NewHMAC(key, msg []byte, digestmod func() hash.Hash) *HMAC {
 	h0 := digestmod()
 	blockSize := h0.BlockSize()
 	if blockSize < 16 {
-		blockSize = 64 // как в Python, fallback
+		blockSize = 64 // fallback (like Python)
 	}
 
-	// если ключ длиннее block_size — хешируем
+	// if key is longer than block_size, hash it
 	if len(key) > blockSize {
 		h := digestmod()
 		h.Write(key)
 		key = h.Sum(nil)
 	}
 
-	// паддим нулями до block_size
+	// pad with zeros up to block_size
 	if len(key) < blockSize {
 		k := make([]byte, blockSize)
 		copy(k, key)
@@ -66,12 +66,12 @@ func NewHMAC(key, msg []byte, digestmod func() hash.Hash) *HMAC {
 	return h
 }
 
-// Update — аналог update(msg)
+// Update mirrors update(msg).
 func (h *HMAC) Update(msg []byte) {
 	h.data = append(h.data, msg...)
 }
 
-// Copy — аналог copy(), полностью независимая копия
+// Copy mirrors copy(), returning a fully independent copy.
 func (h *HMAC) Copy() *HMAC {
 	kc := make([]byte, len(h.key))
 	copy(kc, h.key)
@@ -88,9 +88,9 @@ func (h *HMAC) Copy() *HMAC {
 	}
 }
 
-// compute() — внутренний расчёт HMAC, как digest() в Python-версии
+// compute() is the internal HMAC computation, like digest() in the Python version.
 func (h *HMAC) compute() []byte {
-	// key ⊕ 0x36 и key ⊕ 0x5c через translate-таблицы
+	// key ⊕ 0x36 and key ⊕ 0x5c via translate tables
 	kInner := make([]byte, len(h.key))
 	kOuter := make([]byte, len(h.key))
 	for i, b := range h.key {
@@ -109,7 +109,7 @@ func (h *HMAC) compute() []byte {
 	return outer.Sum(nil)
 }
 
-// Digest — аналог digest()
+// Digest mirrors digest().
 func (h *HMAC) Digest() []byte {
 	sum := h.compute()
 	out := make([]byte, len(sum))
@@ -117,7 +117,7 @@ func (h *HMAC) Digest() []byte {
 	return out
 }
 
-// HexDigest — аналог hexdigest()
+// HexDigest mirrors hexdigest().
 func (h *HMAC) HexDigest() string {
 	sum := h.Digest()
 	const hex = "0123456789abcdef"
@@ -129,12 +129,12 @@ func (h *HMAC) HexDigest() string {
 	return string(out)
 }
 
-// New — точный аналог функции new(...) из Python
+// New is an exact analogue of Python's new(...).
 func New(key, msg []byte, digestmod func() hash.Hash) *HMAC {
 	return NewHMAC(key, msg, digestmod)
 }
 
-// DigestFast — аналог функции digest(key, msg, digest)
+// DigestFast mirrors digest(key, msg, digest).
 func DigestFast(key, msg []byte, digestmod func() hash.Hash) []byte {
 	h := NewHMAC(key, msg, digestmod)
 	return h.Digest()

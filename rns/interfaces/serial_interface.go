@@ -295,7 +295,7 @@ func (d *SerialDriver) readLoop() {
 		}
 
 		if n == 0 {
-			// “нет данных”: mirror Python behaviour (clear partial frame after timeout).
+			// "no data": mirror Python behaviour (clear partial frame after timeout).
 			timeSince := time.Now().UnixMilli() - lastReadMS
 			if dataBuf.Len() > 0 && timeSince > timeoutMS {
 				dataBuf.Reset()

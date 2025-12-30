@@ -14,17 +14,17 @@ import (
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
-// зависимые вещи считаю, что у тебя уже есть:
+// Porting notes: this file assumes these types/values already exist:
 //  - type Link
 //  - type Packet
 //  - type Identity
 //  - var Reticulum struct{ ResourcePath string; HEADER_MAXSIZE, IFAC_MIN_SIZE int }
 //  - Packet contexts: PacketRESOURCE, PacketRESOURCE_ADV, PacketRESOURCE_REQ, ...
 //  - Transport.cache, Transport.cache_request, etc.
-//  - msgpack-библиотека
+//  - a msgpack library
 
 const (
-	// окно
+	// window
 	ResourceWindow            = 4
 	ResourceWindowMin         = 2
 	ResourceWindowMaxSlow     = 10
@@ -60,7 +60,7 @@ const (
 	HashmapNotExhausted byte = 0x00
 	HashmapExhausted    byte = 0xFF
 
-	// статусы
+	// statuses
 	ResourceNone          = 0x00
 	ResourceQueued        = 0x01
 	ResourceAdvertised    = 0x02
@@ -73,9 +73,9 @@ const (
 	ResourceRejected      = 0x00
 )
 
-// Resource — перенос Python-класса Resource
+// Resource is a port of the Python Resource class.
 type Resource struct {
-	// постоянные параметры ресурса
+	// immutable resource parameters
 	flags            byte
 	size             int
 	totalSize        int
@@ -101,17 +101,17 @@ type Resource struct {
 	hashmapMaxLen     int
 	collisionGuardLen int
 
-	// SDU и части
+	// SDU and parts
 	sdu                   int
 	totalParts            int
-	parts                 [][]byte // только payload, без заголовков
+	parts                 [][]byte // payload only, without headers
 	outgoingParts         []*resourcePart
 	outgoingPartByMapHash map[string]*Packet
 	sentParts             int
 	receivedCount         int
 	outstanding           int
 
-	// окно
+	// window
 	window            int
 	windowMax         int
 	windowMin         int
@@ -121,7 +121,7 @@ type Resource struct {
 	consecutiveHeight int
 	receiverMinHeight int
 
-	// тайминги/RTT
+	// timing/RTT
 	timeout             float64
 	timeoutFactor       float64
 	partTimeoutFactor   float64
@@ -149,12 +149,12 @@ type Resource struct {
 	fastRateRounds     int
 	verySlowRateRounds int
 
-	// авто-сжатие
+	// auto-compression
 	autoCompress       bool
 	autoCompressLimit  int
 	autoCompressOption any
 
-	// файлы/пути
+	// files/paths
 	storagePath     string
 	metaStoragePath string
 	inputFile       *os.File
@@ -174,7 +174,7 @@ type Resource struct {
 	advSent         time.Time
 	lastRequestData []byte
 
-	// вспомогательные вещи
+	// helper fields
 	assemblyLock  bool
 	preparingNext bool
 	nextSegment   *Resource
@@ -272,9 +272,9 @@ const (
 )
 
 var (
-	// HASHMAP_MAX_LEN зависит от MTU. В Python: floor((Link.MDU-OVERHEAD)/MAPHASH_LEN)
-	// В Go можно вычислять динамически от link.MDU при pack(), но оставим глобально,
-	// если у тебя MDU фиксированный.
+	// HASHMAP_MAX_LEN depends on MTU. In Python: floor((Link.MDU-OVERHEAD)/MAPHASH_LEN)
+	// In Go this can be computed dynamically from link.MDU during pack(), but we keep it
+	// global for now (works fine when MDU is fixed).
 	HashmapMaxLen = resourceHashmapCapacity(LinkMDU)
 
 	CollisionGuardSize = 2*ResourceWindowMax + HashmapMaxLen
@@ -318,9 +318,9 @@ func init() {
 	}
 }
 
-// ---------------- статические операции ----------------
+// ---------------- static operations ----------------
 
-// Reject — аналог Resource.reject()
+// ResourceReject mirrors Resource.reject().
 func ResourceReject(advPkt *Packet) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -342,7 +342,7 @@ func ResourceReject(advPkt *Packet) {
 	_ = reject.Send()
 }
 
-// Accept — аналог Resource.accept()
+// ResourceAccept mirrors Resource.accept().
 func ResourceAccept(advPkt *Packet, cb func(*Resource), progCb func(*Resource), reqID []byte) (*Resource, error) {
 	adv, err := ResourceAdvertisementUnpack(advPkt.Plaintext)
 	if err != nil {
@@ -444,7 +444,7 @@ func ResourceAccept(advPkt *Packet, cb func(*Resource), progCb func(*Resource), 
 	return res, nil
 }
 
-// ---------------- конструктор исходящего ресурса ----------------
+// ---------------- outgoing resource constructor ----------------
 
 func NewResource(
 	data []byte,
@@ -452,7 +452,7 @@ func NewResource(
 	link *Link,
 	metadata any,
 	advertise bool,
-	autoCompress any, // bool или int
+	autoCompress any, // bool or int
 	cb func(*Resource),
 	progCb func(*Resource),
 	timeout *float64,
@@ -516,7 +516,7 @@ func NewResource(
 		if len(packed) > MetadataMaxSize {
 			return nil, errors.New("Resource metadata size exceeded")
 		}
-		// первые 3 байта — длина
+		// first 3 bytes are the length
 		sizeBytes := []byte{0, 0, 0}
 		size := len(packed)
 		sizeBytes[0] = byte((size >> 16) & 0xff)
@@ -529,7 +529,7 @@ func NewResource(
 		res.hasMetadata = true
 	}
 
-	// определяем общий размер и сегментацию
+	// compute total size and segmentation
 	var totalSize int
 	var segmentData []byte
 	var inputSize int
@@ -607,7 +607,7 @@ func NewResource(
 		// incoming resource (accept)
 	}
 
-	// добавляем metadata к сегменту
+	// add metadata to the segment
 	var fullData []byte
 	if segmentData != nil {
 		if res.hasMetadata && res.segmentIndex == 1 {
@@ -634,7 +634,7 @@ func NewResource(
 		res.initiator = true
 		res.callback = cb
 
-		// авто-сжатие
+		// auto-compression
 		uncompressed := fullData
 		res.uncompressedSize = len(uncompressed)
 
@@ -669,7 +669,7 @@ func NewResource(
 			toSend = uncompressed
 		}
 
-		// random hash префикс
+		// random-hash prefix
 		// Python uses two random values:
 		// - a 4-byte prefix embedded in the encrypted stream (stripped by receiver)
 		// - a 4-byte random hash used for map hashes and resource hash validation
@@ -685,7 +685,7 @@ func NewResource(
 
 		payload := append(streamPrefix, toSend...)
 
-		// шифрование через link
+		// link encryption
 		enc, err := link.Encrypt(payload)
 		if err != nil {
 			return nil, err
@@ -699,7 +699,7 @@ func NewResource(
 			res.originalHash = res.hash
 		}
 
-		// части и hashmap
+		// parts and hashmap
 		hashmapEntries := int(math.Ceil(float64(res.size) / float64(res.sdu)))
 		res.totalParts = hashmapEntries
 		for {
@@ -710,7 +710,7 @@ func NewResource(
 			if ok {
 				break
 			}
-			// при коллизии randomHash заново
+			// retry randomHash on collisions
 		}
 
 		if advertise {
@@ -721,7 +721,7 @@ func NewResource(
 	return res, nil
 }
 
-// buildHashmap — аналог цикла с collision_guard_list
+// buildHashmap mirrors the collision_guard_list loop.
 func (r *Resource) buildHashmap(enc []byte, entries int) (bool, error) {
 	hashmapStart := time.Now()
 	if len(r.randomHash) == 0 {
@@ -746,7 +746,7 @@ func (r *Resource) buildHashmap(enc []byte, entries int) (bool, error) {
 		chunk := enc[start:end]
 		mapHash := r.getMapHash(chunk)
 
-		// проверка коллизии
+		// collision check
 		for _, h := range collisionGuard {
 			if bytes.Equal(h, mapHash) {
 				Log("Found hash collision in resource map, remapping...", LOG_DEBUG)
@@ -787,7 +787,7 @@ func (r *Resource) buildHashmap(enc []byte, entries int) (bool, error) {
 	return ok, nil
 }
 
-// sduValue — расчёт SDU как в __init__
+// sduValue computes SDU like in __init__.
 func (r *Resource) sduValue() int {
 	mtu := 0
 	if r.link != nil {
@@ -874,7 +874,7 @@ func (r *Resource) HashmapUpdate(segment int, hashmap []byte) {
 	r.RequestNext()
 }
 
-// ---------------- реклама/advertise ----------------
+// ---------------- advertise ----------------
 
 func (r *Resource) Advertise() {
 	go r.advertiseJob()
@@ -910,7 +910,7 @@ func (r *Resource) resendAdvertisement() {
 }
 
 func (r *Resource) advertiseJob() {
-	adv := &ResourceAdvertisement{ /* заполним ниже */ }
+	adv := &ResourceAdvertisement{ /* filled below */ }
 	*adv = NewResourceAdvertisementFromResource(r)
 	pkt := NewPacket(
 		r.link,
@@ -1230,7 +1230,7 @@ func (r *Resource) Assemble() {
 	}
 }
 
-// Prove — отправка proof
+// Prove sends the proof.
 func (r *Resource) Prove(data []byte) {
 	if r.status == ResourceFailed {
 		return
@@ -1287,7 +1287,7 @@ func (r *Resource) handleIncomingCompletion() {
 	}
 }
 
-// prepareNextSegment — подготовка следующего сегмента для больших ресурсов
+// prepareNextSegment prepares the next segment for large resources.
 func (r *Resource) prepareNextSegment() {
 	if r.preparingNext || r.inputFile == nil || r.segmentIndex >= r.totalSegments {
 		return
@@ -1318,7 +1318,7 @@ func (r *Resource) prepareNextSegment() {
 	r.nextSegment = next
 }
 
-// ValidateProof — проверка proof от получателя ресурса
+// ValidateProof validates a proof from the resource receiver.
 func (r *Resource) ValidateProof(proofData []byte) {
 	if r.status == ResourceFailed {
 		return
@@ -1376,7 +1376,7 @@ func (r *Resource) releaseSenderState() {
 	r.hashmap = nil
 }
 
-// ReceivePart — обработка входящего resource-пакета
+// ReceivePart handles an incoming resource packet.
 func (r *Resource) ReceivePart(packet *Packet) {
 	r.receiveLock.Lock()
 	r.receivingPart = true
@@ -1521,7 +1521,7 @@ func (r *Resource) ReceivePart(packet *Packet) {
 	}
 }
 
-// RequestNext — запрос следующих частей у инициатора
+// RequestNext requests subsequent parts from the initiator.
 func (r *Resource) RequestNext() {
 	if r.status == ResourceFailed || r.waitingForHMU {
 		return
@@ -1591,7 +1591,7 @@ func (r *Resource) RequestNext() {
 	r.reqResp = time.Time{}
 }
 
-// Request — обработка запроса частей со стороны получателя
+// Request handles an incoming request for parts on the receiver side.
 func (r *Resource) Request(requestData []byte) {
 	if r.status == ResourceFailed {
 		return
@@ -1746,7 +1746,7 @@ func (r *Resource) Request(requestData []byte) {
 	}
 }
 
-// Cancel — отменить передачу ресурса
+// Cancel cancels the resource transfer.
 func (r *Resource) Cancel() {
 	if r.status >= ResourceComplete {
 		return
@@ -1812,17 +1812,17 @@ func safeResourceCallback(cb func(*Resource), res *Resource) {
 	cb(res)
 }
 
-// SetCallback — установить обработчик завершения ресурса
+// SetCallback sets the completion callback.
 func (r *Resource) SetCallback(cb func(*Resource)) {
 	r.callback = cb
 }
 
-// SetProgressCallback — установить обработчик прогресса
+// SetProgressCallback sets the progress callback.
 func (r *Resource) SetProgressCallback(cb func(*Resource)) {
 	r.progressCallback = cb
 }
 
-// GetProgress возвращает общий прогресс ресурса
+// GetProgress returns the overall resource progress.
 func (r *Resource) GetProgress() float64 {
 	if r.status == ResourceComplete && r.segmentIndex == r.totalSegments {
 		return 1.0
@@ -1869,7 +1869,7 @@ func (r *Resource) GetProgress() float64 {
 	return math.Min(1.0, processed/total)
 }
 
-// GetSegmentProgress — прогресс текущего сегмента
+// GetSegmentProgress returns progress for the current segment.
 func (r *Resource) GetSegmentProgress() float64 {
 	if r.status == ResourceComplete && r.segmentIndex == r.totalSegments {
 		return 1.0
@@ -1924,7 +1924,7 @@ func (r *Resource) String() string {
 }
 
 func NewResourceAdvertisementFromResource(r *Resource) ResourceAdvertisement {
-	// флаги
+		// flags
 	var f byte
 	if r.encr {
 		f |= 0x01
@@ -2141,7 +2141,7 @@ func (a *ResourceAdvertisement) DataSize() int {
 	return a.D
 }
 
-// и т.д.
+// etc.
 
 // ---------------- msgpack helpers ----------------
 

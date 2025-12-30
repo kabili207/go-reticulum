@@ -21,11 +21,11 @@ import (
 	umsgpack "github.com/svanichkin/go-reticulum/rns/vendor"
 )
 
-// Константы под X25519/Ed25519
+// Constants for X25519/Ed25519.
 const (
-	x25519KeyLen          = 32 // длина приватного и публичного ключа X25519
-	truncatedHashBytes    = 16 // 128 бит, как в LinkID
-	derivedKeyLen         = 64 // 64 байта под Token (32 signing + 32 enc)
+	x25519KeyLen          = 32 // length of X25519 private/public keys
+	truncatedHashBytes    = 16 // 128 bits, like LinkID
+	derivedKeyLen         = 64 // 64 bytes for Token (32 signing + 32 enc)
 	derivedKeyLenLegacy   = 32 // legacy Token length (16 signing + 16 enc)
 	ratchetExpiry         = 30 * 24 * time.Hour
 	identityPubKeyLen     = x25519KeyLen + ed25519.PublicKeySize
@@ -33,17 +33,17 @@ const (
 	ed25519SeedLen        = ed25519.SeedSize // Python Identity stores 32-byte seed
 )
 
-// Identity — аналог RNS.Identity
+// Identity mirrors RNS.Identity.
 type Identity struct {
 	curve ecdh.Curve
 
-	// шифрование (X25519)
+	// encryption (X25519)
 	prv      *ecdh.PrivateKey
 	prvBytes []byte
 	pub      *ecdh.PublicKey
 	pubBytes []byte
 
-	// подпись (Ed25519)
+	// signature (Ed25519)
 	sigPriv      ed25519.PrivateKey
 	sigPrivBytes []byte
 	sigPub       ed25519.PublicKey
@@ -51,7 +51,7 @@ type Identity struct {
 
 	AppData []byte
 
-	// хэши
+	// hashes
 	Hash    []byte
 	HexHash string
 }
@@ -89,7 +89,7 @@ type knownDestinationEntry struct {
 	AppData    []byte
 }
 
-// NewIdentity создаёт новую личность с новыми ключами
+// NewIdentity creates a new identity with fresh keys.
 func NewIdentity() (*Identity, error) {
 	id := &Identity{
 		curve: ecdh.X25519(),
@@ -100,7 +100,7 @@ func NewIdentity() (*Identity, error) {
 	return id, nil
 }
 
-// IdentityFromBytes — загрузка из приватных байт (как from_bytes)
+// IdentityFromBytes loads from private bytes (like from_bytes).
 func IdentityFromBytes(prvBytes []byte) (*Identity, error) {
 	id := &Identity{
 		curve: ecdh.X25519(),
@@ -111,7 +111,7 @@ func IdentityFromBytes(prvBytes []byte) (*Identity, error) {
 	return id, nil
 }
 
-// IdentityFromFile — загрузка из файла (как from_file)
+// IdentityFromFile loads from file (like from_file).
 func IdentityFromFile(path string) (*Identity, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -120,7 +120,7 @@ func IdentityFromFile(path string) (*Identity, error) {
 	return IdentityFromBytes(b)
 }
 
-// Save — аналог to_file(path)
+// Save mirrors to_file(path).
 func (id *Identity) Save(path string) error {
 	if id.prvBytes == nil || len(id.prvBytes) != x25519KeyLen {
 		return errors.New("identity has no private key material")
@@ -140,7 +140,7 @@ func (id *Identity) Save(path string) error {
 	return os.WriteFile(path, all, 0o600)
 }
 
-// CreateKeys — генерация X25519 + Ed25519
+// CreateKeys generates X25519 + Ed25519 keypairs.
 func (id *Identity) CreateKeys() error {
 	if id.curve == nil {
 		id.curve = ecdh.X25519()
@@ -171,7 +171,7 @@ func (id *Identity) CreateKeys() error {
 	return nil
 }
 
-// GetPrivateKey — как get_private_key()
+// GetPrivateKey mirrors get_private_key().
 func (id *Identity) GetPrivateKey() []byte {
 	if id.prvBytes == nil || len(id.prvBytes) != x25519KeyLen {
 		return nil
@@ -189,7 +189,7 @@ func (id *Identity) GetPrivateKey() []byte {
 	return out
 }
 
-// GetPublicKey — как get_public_key()
+// GetPublicKey mirrors get_public_key().
 func (id *Identity) GetPublicKey() []byte {
 	if id.pubBytes == nil || id.sigPubBytes == nil {
 		return nil
@@ -199,7 +199,7 @@ func (id *Identity) GetPublicKey() []byte {
 	return out
 }
 
-// LoadPrivateKey — как load_private_key()
+// LoadPrivateKey mirrors load_private_key().
 func (id *Identity) LoadPrivateKey(all []byte) error {
 	if len(all) < x25519KeyLen+ed25519SeedLen {
 		return errors.New("invalid private key length")
@@ -229,7 +229,7 @@ func (id *Identity) LoadPrivateKey(all []byte) error {
 		return errors.New("invalid private key length")
 	}
 
-	// восстановить публичные
+	// rebuild public keys
 	pub := id.prv.PublicKey()
 	id.pub = pub
 	id.pubBytes = pub.Bytes()
@@ -240,7 +240,7 @@ func (id *Identity) LoadPrivateKey(all []byte) error {
 	return nil
 }
 
-// LoadPublicKey — как load_public_key()
+// LoadPublicKey mirrors load_public_key().
 func (id *Identity) LoadPublicKey(pubBytes []byte) error {
 	if len(pubBytes) != identityPubKeyLen {
 		return errors.New("invalid public key length")
@@ -263,7 +263,7 @@ func (id *Identity) LoadPublicKey(pubBytes []byte) error {
 	return nil
 }
 
-// updateHashes — как update_hashes()
+// updateHashes mirrors update_hashes().
 func (id *Identity) updateHashes() {
 	pubAll := id.GetPublicKey()
 	h := TruncatedHash(pubAll)
@@ -277,7 +277,7 @@ func FullHash(data []byte) []byte {
 	return sum[:]
 }
 
-// TruncatedHash — обрезанный SHA-256
+// TruncatedHash is a truncated SHA-256.
 func TruncatedHash(data []byte) []byte {
 	h := FullHash(data)
 	return h[:truncatedHashBytes]
@@ -327,7 +327,7 @@ func ensureKnownDestinationsLoaded() {
 	}
 }
 
-// IdentityGetRandomHash возвращает случайный обрезанный хэш
+// IdentityGetRandomHash returns a random truncated hash.
 func IdentityGetRandomHash() []byte {
 	buf := make([]byte, truncatedHashBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -340,19 +340,19 @@ func IdentityGetRandomHash() []byte {
 	return TruncatedHash(buf)
 }
 
-// GetSalt — как get_salt()
+// GetSalt mirrors get_salt().
 func (id *Identity) GetSalt() []byte {
 	return id.Hash
 }
 
-// GetContext — как get_context()
+// GetContext mirrors get_context().
 func (id *Identity) GetContext() []byte {
 	return nil
 }
 
 // ---- Known destination storage ----
 
-// IdentityRemember сохраняет публичный ключ и app_data для назначения.
+// IdentityRemember persists a public key and app_data for a destination.
 func IdentityRemember(packetHash, destinationHash, publicKey, appData []byte) error {
 	ensureKnownDestinationsLoaded()
 
@@ -374,7 +374,7 @@ func IdentityRemember(packetHash, destinationHash, publicKey, appData []byte) er
 	return nil
 }
 
-// IdentityRecall ищет identity по хэшу назначения или хэшу identity.
+// IdentityRecall looks up an identity by destination hash or identity hash.
 func IdentityRecall(targetHash []byte, fromIdentityHash ...bool) *Identity {
 	ensureKnownDestinationsLoaded()
 
@@ -426,7 +426,7 @@ func IdentityRecall(targetHash []byte, fromIdentityHash ...bool) *Identity {
 	return nil
 }
 
-// IdentityRecallAppData возвращает последнее app_data.
+// IdentityRecallAppData returns the last app_data.
 func IdentityRecallAppData(destinationHash []byte) []byte {
 	ensureKnownDestinationsLoaded()
 
@@ -438,7 +438,7 @@ func IdentityRecallAppData(destinationHash []byte) []byte {
 	return nil
 }
 
-// IdentitySaveKnownDestinations пишет карту на диск.
+// IdentitySaveKnownDestinations writes the map to disk.
 func IdentitySaveKnownDestinations() error {
 	ensureKnownDestinationsLoaded()
 
@@ -450,7 +450,7 @@ func IdentitySaveKnownDestinations() error {
 		return err
 	}
 
-	// Подмешиваем данные с диска, чтобы не терять записи других процессов.
+	// Merge on-disk data so we don't lose entries from other processes.
 	diskEntries, err := readKnownDestinationsFromDisk(path)
 	if err == nil {
 		knownDestinations.Lock()
@@ -496,7 +496,7 @@ func IdentitySaveKnownDestinations() error {
 	return nil
 }
 
-// IdentityLoadKnownDestinations читает карту из storage/known_destinations.
+// IdentityLoadKnownDestinations reads the map from storage/known_destinations.
 func IdentityLoadKnownDestinations() error {
 	path := knownDestinationsPath()
 	data, err := os.ReadFile(path)
@@ -523,7 +523,7 @@ func IdentityLoadKnownDestinations() error {
 	return nil
 }
 
-// IdentityPersistData сохраняет карту, если мы standalone instance.
+// IdentityPersistData persists the map if we are a standalone instance.
 func IdentityPersistData() {
 	if inst := GetInstance(); inst != nil && inst.IsConnectedToSharedInstance {
 		return
@@ -533,7 +533,7 @@ func IdentityPersistData() {
 	}
 }
 
-// IdentityExitHandler вызывается при завершении Reticulum.
+// IdentityExitHandler runs during Reticulum shutdown.
 func IdentityExitHandler() {
 	IdentityPersistData()
 }
@@ -704,7 +704,7 @@ func packetSignalString(packet *Packet) string {
 	return " [" + strings.Join(parts, ", ") + "]"
 }
 
-// IdentityCurrentRatchetID возвращает ID текущего ратчета, если он известен.
+// IdentityCurrentRatchetID returns the ID of the current ratchet if known.
 func IdentityCurrentRatchetID(destinationHash []byte) []byte {
 	ratchet := IdentityGetRatchet(destinationHash)
 	if ratchet == nil {
@@ -713,7 +713,7 @@ func IdentityCurrentRatchetID(destinationHash []byte) []byte {
 	return IdentityGetRatchetID(ratchet)
 }
 
-// IdentityValidateAnnounce сверяет announce-пакет с тем, что генерирует Destination.
+// IdentityValidateAnnounce validates an announce packet against Destination generation.
 func IdentityValidateAnnounce(packet *Packet, onlyValidateSignature bool) bool {
 	if packet == nil || packet.PacketType != PacketTypeAnnounce {
 		return false
@@ -822,8 +822,8 @@ func deriveKey(shared, salt, info []byte, length int) ([]byte, error) {
 	return Cryptography.HKDF(length, shared, salt, info)
 }
 
-// Encrypt — как encrypt(self, plaintext, ratchet=None)
-// Возвращает ephemeral_pub || ciphertext
+// Encrypt mirrors encrypt(self, plaintext, ratchet=None).
+// Returns ephemeral_pub || ciphertext.
 func (id *Identity) Encrypt(plaintext []byte, ratchet []byte) ([]byte, error) {
 	if id.pub == nil {
 		return nil, errors.New("identity has no public key")
@@ -832,7 +832,7 @@ func (id *Identity) Encrypt(plaintext []byte, ratchet []byte) ([]byte, error) {
 		id.curve = ecdh.X25519()
 	}
 
-	// эпифемерный ключ
+	// ephemeral key
 	eph, err := id.curve.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
@@ -859,7 +859,7 @@ func (id *Identity) Encrypt(plaintext []byte, ratchet []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	tok, err := Cryptography.NewToken(derived) // AES Token из crypto-пакета
+	tok, err := Cryptography.NewToken(derived) // AES Token from crypto package
 	if err != nil {
 		return nil, err
 	}
@@ -871,7 +871,7 @@ func (id *Identity) Encrypt(plaintext []byte, ratchet []byte) ([]byte, error) {
 	return append(ephPubBytes, ct...), nil
 }
 
-// decryptWithShared — как __decrypt()
+// decryptWithShared mirrors __decrypt().
 func (id *Identity) decryptWithShared(shared, ciphertext []byte) ([]byte, error) {
 	derived, err := deriveKey(shared, id.GetSalt(), id.GetContext(), derivedKeyLen)
 	if err != nil {
@@ -901,7 +901,7 @@ func (id *Identity) decryptWithShared(shared, ciphertext []byte) ([]byte, error)
 	return nil, err
 }
 
-// Decrypt — как decrypt(self, ciphertext_token, ratchets=None, enforce_ratchets=False)
+// Decrypt mirrors decrypt(self, ciphertext_token, ratchets=None, enforce_ratchets=False).
 func (id *Identity) Decrypt(ciphertextToken []byte, ratchets [][]byte, enforceRatchets bool) ([]byte, error) {
 	plaintext, _, err := id.decryptWithRatchetID(ciphertextToken, ratchets, enforceRatchets)
 	return plaintext, err
@@ -964,7 +964,7 @@ func (id *Identity) decryptWithRatchetID(ciphertextToken []byte, ratchets [][]by
 	return pt, nil, err
 }
 
-// Sign — как sign()
+// Sign mirrors sign().
 func (id *Identity) Sign(msg []byte) ([]byte, error) {
 	if id.sigPriv == nil {
 		return nil, errors.New("identity has no signing key")
@@ -972,7 +972,7 @@ func (id *Identity) Sign(msg []byte) ([]byte, error) {
 	return ed25519.Sign(id.sigPriv, msg), nil
 }
 
-// Validate — как validate()
+// Validate mirrors validate().
 func (id *Identity) Validate(sig, msg []byte) bool {
 	if id.sigPub == nil {
 		return false
@@ -980,7 +980,7 @@ func (id *Identity) Validate(sig, msg []byte) bool {
 	return ed25519.Verify(id.sigPub, msg, sig)
 }
 
-// String — как __str__()
+// String mirrors __str__().
 func (id *Identity) String() string {
 	if id.HexHash == "" {
 		return "<identity>"
@@ -988,7 +988,7 @@ func (id *Identity) String() string {
 	return id.HexHash
 }
 
-// Prove отправляет proof-пакет для подтверждения доставки.
+// Prove sends a proof packet to confirm delivery.
 func (id *Identity) Prove(packet *Packet, destination *Destination) {
 	if id == nil || packet == nil {
 		return
@@ -1123,7 +1123,7 @@ func IdentityGetRatchet(destHash []byte) []byte {
 	return append([]byte{}, ratchet...)
 }
 
-// IdentityCleanRatchets удаляет просроченные или повреждённые записи из storage/ratchets.
+// IdentityCleanRatchets removes expired or corrupted records from storage/ratchets.
 func IdentityCleanRatchets() {
 	Log("Cleaning ratchets...", LogDebug)
 	dir := ratchetDirectory()

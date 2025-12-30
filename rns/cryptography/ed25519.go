@@ -8,7 +8,7 @@ import (
 )
 
 // ------------------------------------------------------------
-// Ed25519PrivateKey (эквивалент Python Ed25519PrivateKey)
+// Ed25519PrivateKey (equivalent of Python Ed25519PrivateKey)
 // ------------------------------------------------------------
 
 type Ed25519PrivateKey struct {
@@ -50,7 +50,7 @@ func (k *Ed25519PrivateKey) Sign(message []byte) []byte {
 }
 
 // ------------------------------------------------------------
-// Ed25519PublicKey (эквивалент Python Ed25519PublicKey)
+// Ed25519PublicKey (equivalent of Python Ed25519PublicKey)
 // ------------------------------------------------------------
 
 type Ed25519PublicKey struct {

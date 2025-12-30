@@ -28,7 +28,7 @@ import (
 	configobj "github.com/svanichkin/configobj"
 )
 
-// аналог ConfigObj
+// ConfigObj equivalent.
 
 const (
 	DefaultMTU              = 500
@@ -52,7 +52,7 @@ const (
 	sha256Bits                = 256
 )
 
-// Интерфейсные режимы (совпадают с RNS.Interfaces.Interface.MODE_*)
+// Interface modes (match RNS.Interfaces.Interface.MODE_*).
 const (
 	InterfaceModeFull         = 0x01
 	InterfaceModePointToPoint = 0x02
@@ -71,7 +71,7 @@ var (
 	instance     *Reticulum
 	instanceOnce sync.Once
 
-	// глобальные флаги, как в Python-классе
+	// Global flags, like in the Python class.
 	transportEnabled        = false
 	linkMTUDiscovery        = LINK_MTU_DISCOVERY
 	remoteManagementEnabled = false
@@ -112,7 +112,7 @@ func init() {
 }
 
 type Reticulum struct {
-	// глобальные пути
+	// Global paths.
 	UserDir       string
 	ConfigDir     string
 	ConfigPath    string
@@ -124,7 +124,7 @@ type Reticulum struct {
 
 	Config *configobj.Config
 
-	// настройки / состояния
+	// Settings/state.
 	localInterfacePort int
 	localControlPort   int
 	LocalSocketPath    string
@@ -153,10 +153,10 @@ type Reticulum struct {
 
 	ifacSalt []byte
 
-	// rpc слушатель + адрес (TCP/Unix)
+	// RPC listener + address (TCP/Unix).
 	rpcAddr    string
 	rpcNetwork string      // "tcp" / "unix"
-	rpcLn      RPCListener // обёртка (ниже интерфейс)
+	rpcLn      RPCListener // wrapper (see interface below)
 }
 
 // Optional API parity with Python Reticulum/RNS daemon management calls.
@@ -243,8 +243,8 @@ func (o tcpOwnerAdapter) Inbound(data []byte, _ *ifaces.TCPClientInterface) {
 	}
 }
 
-// RPCListener — абстракция над TCP/Unix листенером.
-// Реализацию можешь сделать как тебе надо.
+// RPCListener is an abstraction over TCP/Unix listeners.
+// The implementation is intentionally flexible.
 type RPCListener interface {
 	Accept() (RPCConn, error)
 	Close() error
@@ -450,7 +450,7 @@ func performRPCHandshake(conn net.Conn, key []byte, server bool) error {
 	return nil
 }
 
-// вспомогательный парсер hex
+// helper hex parser
 func mustHex(s string) []byte {
 	b, err := hex.DecodeString(s)
 	if err != nil {
@@ -459,7 +459,7 @@ func mustHex(s string) []byte {
 	return b
 }
 
-// GetInstance аналог get_instance()
+// GetInstance mirrors get_instance().
 func GetInstance() *Reticulum {
 	return instance
 }
@@ -468,7 +468,7 @@ var (
 	errAlreadyRunning = errors.New("Reticulum is already running")
 )
 
-// NewReticulum аналог __init__
+// NewReticulum mirrors __init__.
 func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 	requireSharedInstance bool, sharedInstanceType *string) (ret *Reticulum, retErr error) {
 
@@ -502,7 +502,7 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		}
 	}()
 
-	// конфиг-дир
+	// config dir
 	if configDir != nil {
 		r.ConfigDir = *configDir
 	} else {
@@ -523,14 +523,14 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 	r.IdentityPath = filepath.Join(r.ConfigDir, "storage/identities")
 	r.InterfacePath = filepath.Join(r.ConfigDir, "interfaces")
 
-	// логи (логdest подгони под свой логгер)
+	// logging (adapt log destination to your logger)
 	if lf, ok := logdest.(LogFileMarker); ok && lf == LogFile {
 		SetLogDestFile(filepath.Join(r.ConfigDir, "logfile"))
 	} else if cb, ok := logdest.(func(level int, msg string)); ok {
 		SetLogDestCallback(cb)
 	}
 
-	// уровень логов
+	// log level
 	if loglevel != nil {
 		ll := *loglevel
 		if ll > LOG_EXTREME {
@@ -587,7 +587,7 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		return sigPub, sign, nil
 	}
 
-	// конфиг
+	// config
 	if fileExists(r.ConfigPath) {
 		cfg, err := configobj.Load(r.ConfigPath)
 		if err != nil {
@@ -617,9 +617,9 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 	Log("Configuration loaded from "+r.ConfigPath, LogVerbose)
 
 	_ = IdentityLoadKnownDestinations()
-	Start(r) // аналог RNS.Transport.start(self)
+	Start(r) // mirrors RNS.Transport.start(self)
 
-	// выбор AF_UNIX vs TCP
+	// choose AF_UNIX vs TCP
 	if vendor.UseAFUnix() {
 		if r.SharedInstanceType == "tcp" {
 			r.UseAFUnix = false
@@ -677,7 +677,7 @@ func NewReticulum(configDir *string, loglevel *int, logdest any, verbosity *int,
 		Log("System interfaces are ready", LogVerbose)
 	}
 
-	// сигналы и exit handler
+	// signals and exit handler
 	setupExitHandlers()
 	SetExitHandler(exitHandler)
 
@@ -795,13 +795,13 @@ func waitForLocalClientsToDisconnect(timeout time.Duration) bool {
 	return true
 }
 
-// ---------------- конфиг ----------------
+// ---------------- config ----------------
 
 func (r *Reticulum) applyConfig() error {
 	// [logging]
 	if r.Config != nil && r.Config.HasSection("logging") {
 		sec := r.Config.Section("logging")
-		if r.RequestedLoglevel == nil { // как в Python: только если не задан явно
+		if r.RequestedLoglevel == nil { // like Python: only if not explicitly set
 			if v, err := sec.AsInt("loglevel"); err == nil {
 				ll := v
 				if r.RequestedVerbosity != nil {
@@ -2549,7 +2549,7 @@ func parseFloat(s string) (float64, bool) {
 	return fv, true
 }
 
-// ---------------- добавление интерфейсов и IFAC ----------------
+// ---------------- interface setup and IFAC ----------------
 
 func (r *Reticulum) AddInterface(
 	ifc *Interface,
@@ -2690,10 +2690,10 @@ func (r *Reticulum) cleanCaches() {
 	}
 }
 
-// ---------------- RPC loop + публичные методы ----------------
+// ---------------- RPC loop + public methods ----------------
 
-// реализацию RPCListener / RPCConn и сериализации call/response
-// сделай под свой стек (JSON, gob, msgpack — не важно).
+// Implement RPCListener / RPCConn and call/response serialization as needed
+// (JSON, gob, msgpack, ...).
 
 func (r *Reticulum) rpcLoop() {
 	if r == nil || r.rpcLn == nil {
@@ -2718,6 +2718,10 @@ func (r *Reticulum) handleRPC(conn RPCConn) {
 
 	var call map[string]any
 	if err := conn.Recv(&call); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			// Normal case: client connects and closes without sending anything.
+			return
+		}
 		Log("RPC recv error: "+err.Error(), LogError)
 		return
 	}
@@ -2835,8 +2839,8 @@ func (r *Reticulum) rpcCallInterfaceMgmt(action, name string) error {
 	return nil
 }
 
-// Ниже — только подписи/основная логика, по сути 1:1 с Python.
-// Внутри либо RPC-клиент, либо локальный вызов transport/*/identity.
+// The methods below mirror Python behaviour closely (signatures + core logic).
+// Internally they either call via RPC or call transport/*/identity directly.
 
 func (r *Reticulum) GetInterfaceStats() map[string]any {
 	if r.IsConnectedToSharedInstance {
@@ -3318,11 +3322,11 @@ func (r *Reticulum) GetPacketQ(packetHash []byte) *float64 {
 	return Transport.GetPacketQ(packetHash)
 }
 
-// остальные методы: GetPathTable, GetRateTable, DropPath, DropAllVia,
+// Other methods (GetPathTable, GetRateTable, DropPath, DropAllVia,
 // DropAnnounceQueues, GetNextHopIfName, GetFirstHopTimeout,
-// GetNextHop, GetLinkCount, GetPacketRSSI/SNR/Q — по тому же шаблону.
+// GetNextHop, GetLinkCount, GetPacketRSSI/SNR/Q) follow the same pattern.
 
-// ---------------- статики как в Python ----------------
+// ---------------- statics (like Python) ----------------
 
 func ShouldUseImplicitProof() bool {
 	return useImplicitProof
@@ -3344,7 +3348,7 @@ func ProbeDestinationEnabled() bool {
 	return allowProbes
 }
 
-// defaultConfigLines — прямое копирование __default_rns_config__
+// defaultConfigLines is a direct copy of __default_rns_config__.
 var defaultConfigLines = []string{
 	"# This is the default Reticulum config file.",
 	"# You should probably edit it to include any additional,",

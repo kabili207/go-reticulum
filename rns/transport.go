@@ -185,7 +185,7 @@ var (
 	announceHandlersMu sync.RWMutex
 	announceHandlers   []AnnounceHandler
 
-	// сюда же кладёшь все свои таблицы:
+	// Store additional transport tables here as well:
 	// AnnounceTable, PathTable, ReverseTable, LinkTable, DiscoveryPathRequests, ...
 )
 
@@ -562,7 +562,12 @@ func WithAnnounceAttachedInterface(ifc *Interface) AnnounceOption {
 func Start(owner *Reticulum) {
 	StartTime = time.Now()
 	Owner = owner
-	JobsRunning = true
+	// JobsRunning is a "Jobs() currently executing" guard used by Inbound/Outbound.
+	// It must be false during startup, otherwise startup-time Outbound calls (eg.
+	// probe destination announce) can deadlock waiting for Jobs() to finish before
+	// the job loop has even started.
+	JobsRunning = false
+	JobsLocked = false
 	// Python: Transport.cache_last_cleaned = time.time() + 60
 	LastCacheCleaned = time.Now().Add(60 * time.Second)
 	ensureTransportIdentity()
@@ -571,10 +576,10 @@ func Start(owner *Reticulum) {
 	loadTunnelTable()
 	configureControlDestinations()
 
-	// … тут у тебя уже портирован кусок start() –
-	// загрузка identity, таблиц, probe destination и т.д.
+	// ... the rest of start() is ported here:
+	// loading identities, tables, probe destination, etc.
 
-	// сортировка интерфейсов по битрейту
+	// sort interfaces by bitrate
 	PrioritiseInterfaces()
 
 	// Python parity: Synthesize tunnels for any interfaces wanting it.
@@ -589,7 +594,7 @@ func Start(owner *Reticulum) {
 		}
 	}
 
-	// запускаем фоновые циклы
+	// start background loops
 	go JobLoop()
 	go CountTrafficLoop()
 }
@@ -1123,7 +1128,7 @@ func saveTunnelTable() error {
 	return os.WriteFile(path, buf, 0o600)
 }
 
-// -------- приоритизация и счётчик трафика --------
+// -------- prioritisation and traffic counters --------
 
 func PrioritiseInterfaces() {
 	defer func() {
@@ -1132,7 +1137,7 @@ func PrioritiseInterfaces() {
 		}
 	}()
 
-	// сортируем по bitrate по убыванию
+	// sort by bitrate descending
 	sort.SliceStable(Interfaces, func(i, j int) bool {
 		return Interfaces[i].Bitrate > Interfaces[j].Bitrate
 	})
@@ -1196,7 +1201,7 @@ func CountTrafficLoop() {
 	}
 }
 
-// -------- главный job loop --------
+// -------- main job loop --------
 
 func JobLoop() {
 	for {
@@ -1214,11 +1219,11 @@ func Jobs() {
 	defer func() {
 		JobsRunning = false
 
-		// отправка собранных пакетов
+		// send collected packets
 		for _, p := range outgoing {
 			_ = p.Send()
 		}
-		// запросы пути
+		// path requests
 		for dst, blocked := range pathRequests {
 			if blocked == nil {
 				RequestPath(dst[:], nil)
@@ -1239,10 +1244,10 @@ func Jobs() {
 
 	now := time.Now()
 
-	// ---- pending и active links ----
+	// ---- pending and active links ----
 	if now.Sub(LinksLastChecked) > LinksCheckInt {
-		// pending_links / active_links — 1:1 логика:
-		// смотреть на status, убирать CLOSED, делать rediscover path и т.п.
+		// pending_links / active_links mirror Python closely:
+		// check status, remove CLOSED, rediscover paths, etc.
 		handlePendingAndActiveLinks(pathRequests)
 		LinksLastChecked = now
 	}
@@ -1308,7 +1313,7 @@ func Jobs() {
 		TablesLastCulled = now
 	}
 
-	// периодическая очистка reverse/link tables и cache
+	// periodic cleanup of reverse/link tables and caches
 	if now.Sub(LastCacheCleaned) > cacheCleanInterval {
 		if cleanAnnounceCache(now) {
 			culled = true
@@ -1327,9 +1332,9 @@ func Jobs() {
 		lastTablesPersisted = now
 	}
 
-	// тут по аналогии: pending_local_path_requests, discovery_pr_tags, culling таблиц
+	// Similarly here: pending_local_path_requests, discovery_pr_tags, table culling
 	// reverse_table, link_table, path_table, discovery_path_requests, tunnels, path_states
-	// и interface.process_held_announces().
+	// and interface.process_held_announces().
 	if len(heldAnnounces) > 0 {
 		processHeldAnnounces(now, &outgoing)
 	}
@@ -2370,7 +2375,7 @@ func cleanAnnounceCache(now time.Time) bool {
 	return removed
 }
 
-// -------- передача по интерфейсу (IFAC) --------
+// -------- interface transmission (IFAC) --------
 
 func Transmit(ifc *Interface, raw []byte) {
 	defer func() {
@@ -2396,7 +2401,7 @@ func Transmit(ifc *Interface, raw []byte) {
 			return
 		}
 
-		// новый заголовок с флагом IFAC
+			// new header with IFAC flag
 		newHeader := []byte{raw[0] | 0x80, raw[1]}
 		newRaw := append(newHeader, ifac...)
 		newRaw = append(newRaw, raw[2:]...)
@@ -2432,10 +2437,10 @@ func transmitAnnounce(ifc *Interface, raw []byte, hops uint8) {
 	ifc.ProcessAnnounceRaw(raw, int(hops))
 }
 
-// -------- исходящие пакеты --------
+// -------- outbound packets --------
 
 func Outbound(p *Packet) bool {
-	// ждём, пока jobs() не в процессе
+	// wait until Jobs() is not executing
 	for JobsRunning {
 		time.Sleep(500 * time.Microsecond)
 	}
@@ -2470,7 +2475,7 @@ func Outbound(p *Packet) bool {
 		}
 	}
 
-	// путь известен?
+	// is the path known?
 	sendBroadcast := true
 	if p.Type != PacketAnnounce &&
 		p.Destination.Type != DestPlain &&
@@ -2484,7 +2489,7 @@ func Outbound(p *Packet) bool {
 
 			connectedShared := Owner != nil && Owner.IsConnectedToSharedInstance
 			if hops > 1 || (hops == 1 && connectedShared) {
-				// вставляем transport-хедер (HEADER_2 + next hop id)
+					// add transport header (HEADER_2 + next hop id)
 				if p.HeaderType == Header1 {
 					flags := byte(Header2)<<6 |
 						byte(TransportDirect)<<4 |
@@ -2501,7 +2506,7 @@ func Outbound(p *Packet) bool {
 					sendBroadcast = false
 				}
 			} else {
-				// один хоп — шлём напрямую
+					// single hop: send directly
 				packetSent(p)
 				Transmit(outIfc, p.Raw)
 				sent = true
@@ -2511,7 +2516,7 @@ func Outbound(p *Packet) bool {
 	}
 
 	if sendBroadcast {
-		// путь неизвестен: широковещательно по всем OUT интерфейсам
+			// path unknown: broadcast via all OUT interfaces
 		storedHash := false
 
 		for _, ifc := range Interfaces {
@@ -2524,7 +2529,7 @@ func Outbound(p *Packet) bool {
 				shouldSend = false
 			}
 
-			// логика announce-ов с AP/ROAMING/BOUNDARY и очередями
+				// announce logic with AP/ROAMING/BOUNDARY and queues
 			if p.Type == PacketAnnounce {
 				if !shouldAnnounceOnInterface(p, ifc, outTime) {
 					shouldSend = false
@@ -2556,15 +2561,15 @@ func Outbound(p *Packet) bool {
 	return sent
 }
 
-// -------- фильтр входящих --------
+// -------- inbound filtering --------
 
 func PacketFilter(p *Packet) bool {
-	// за shared-instance решает он сам
+	// shared instance decides for itself
 	if Owner != nil && Owner.IsConnectedToSharedInstance {
 		return true
 	}
 
-	// чужой transport_id (кроме announce)
+	// foreign transport_id (except announces)
 	if p.TransportID != nil && p.Type != PacketAnnounce {
 		if TransportIdentity != nil && !bytes.Equal(p.TransportID, TransportIdentity.Hash) {
 			Logf(LogExtreme, "Ignoring packet %s for other transport instance",
@@ -2621,7 +2626,7 @@ func PacketFilter(p *Packet) bool {
 	return false
 }
 
-// -------- входящие пакеты --------
+// -------- inbound packets --------
 
 func Inbound(raw []byte, ifc *Interface) {
 	if len(raw) <= 2 {
@@ -2666,12 +2671,12 @@ func Inbound(raw []byte, ifc *Interface) {
 		raw = newRaw
 	} else {
 		if raw[0]&0x80 == 0x80 {
-			// интерфейс без IFAC, но флаг стоит → дроп
+			// interface without IFAC, but flag set -> drop
 			return
 		}
 	}
 
-	// ждём, пока jobs() не крутится
+	// wait until Jobs() is not executing
 	for JobsRunning {
 		time.Sleep(500 * time.Microsecond)
 	}
@@ -2707,10 +2712,10 @@ func Inbound(raw []byte, ifc *Interface) {
 		}
 	}
 
-	// кэшим RSSI/SNR/Q для клиентов
+	// cache RSSI/SNR/Q for clients
 	cacheLocalStats(p, ifc)
 
-	// коррекция hops для local clients / shared instance
+	// hop correction for local clients / shared instance
 	if len(LocalClientInterfaces) > 0 {
 		if IsLocalClientInterface(ifc) {
 			p.Hops--
@@ -2735,7 +2740,7 @@ func Inbound(raw []byte, ifc *Interface) {
 
 	if rememberHash {
 		AddPacketHash(p.PacketHash)
-		// сюда же — кэширование пакета, если оно у тебя есть
+			// also cache the packet here, if enabled
 	}
 
 	if p.Context == PacketCacheRequest {
@@ -2775,7 +2780,7 @@ func Inbound(raw []byte, ifc *Interface) {
 		}
 	}
 
-	// PLAIN BROADCAST от клиента → разнести по интерфейсам
+	// PLAIN BROADCAST from a client -> forward across interfaces
 	if !isControlHash(p.DestinationHash) &&
 		p.DestinationType == DestPlain &&
 		p.TransportType == Broadcast {

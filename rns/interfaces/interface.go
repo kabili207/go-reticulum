@@ -304,7 +304,6 @@ func (i *Interface) FinalInit() {
 			i.Created = time.Now()
 		}
 		i.Detached = false
-		i.Online = true
 	}
 }
 

@@ -1,6 +1,6 @@
 package rns
 
-// Resolver — заглушка (как в Resolver.py), логика будет добавлена позже.
+// Resolver is a stub (like Resolver.py); logic will be added later.
 type Resolver struct{}
 
 func (Resolver) ResolveIdentity(fullName string) {}

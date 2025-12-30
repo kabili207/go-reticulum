@@ -1,28 +1,28 @@
 # Kitchen-sink Reticulum config (Go port).
-# Цель: собрать в одном месте все важные ключи и интерфейсы, чтобы было что
-# копировать/включать для тестов. Большинство интерфейсов выключены по умолчанию.
+# Goal: keep all important keys and interfaces in one place so it's easy to
+# copy/enable for tests. Most interfaces are disabled by default.
 
 [reticulum]
-  # transport влияет на rnpath/rnprobe/announce routing
+  # Transport affects rnpath/rnprobe/announce routing.
   enable_transport = No
 
-  # shared instance (для rnstatus/rnpath/rnprobe/rnx/rncp и т.д.)
+  # Shared instance (used by rnstatus/rnpath/rnprobe/rnx/rncp, etc.).
   share_instance = Yes
   instance_name = default
 
-  # Для docker/CI удобнее tcp, для локального использования unix обычно ок.
+  # For Docker/CI, TCP can be convenient; for local usage, unix is usually fine.
   # shared_instance_type = tcp
   # shared_instance_port = 37428
   # instance_control_port = 37429
 
-  # Для систем без общего каталога конфигурации (например Android).
+  # For systems without a shared configuration directory (eg. Android).
   # rpc_key = e5c032d3ec4e64a6aca9927ba8ab73336780f6d71790
 
-  # Remote management (rnstatus/rnpath с -R/-i в Python; у нас — аналогично по смыслу).
+  # Remote management (rnstatus/rnpath with -R/-i in Python; similar semantics here).
   # enable_remote_management = yes
   # remote_management_allowed = <identity_hash1>, <identity_hash2>
 
-  # Прочие флаги, которые встречаются в Python и/или в нашем порте.
+  # Other flags present in Python and/or this port.
   # panic_on_interface_error = No
   # respond_to_probes = No
   # use_implicit_proof = No
@@ -34,7 +34,7 @@
   loglevel = 4
 
 [interfaces]
-  # --- “без железа”, удобно для тестов ---
+  # --- "no hardware" setups, handy for tests ---
 
   [[UDP Loopback Example]]
     type = UDPInterface
@@ -83,14 +83,14 @@
     connectable = yes
     peers = example.b32.i2p
 
-  # --- Pipe interface (запускает подпроцесс; требует command=...) ---
+  # --- Pipe interface (spawns a subprocess; requires command=...) ---
   [[Pipe Example]]
     type = PipeInterface
     enabled = no
     command = "cat"
     # respawn_delay = 5
 
-  # --- Железо/серийка ---
+  # --- Hardware/serial ---
 
   [[RNode Example]]
     type = RNodeInterface
@@ -106,7 +106,7 @@
   [[RNode Multi Example]]
     type = RNodeMultiInterface
     enabled = no
-    # Вложенные подсекции — список RNode в одной “мульти” обёртке.
+    # Nested subsections define a list of RNodes in one "multi" wrapper.
     # [[[rnode0]]]
     #   port = /dev/ttyUSB0
     # [[[rnode1]]]
@@ -149,4 +149,3 @@
     enabled = no
     port = /dev/ttyUSB4
     # configured_bitrate = 250000
-

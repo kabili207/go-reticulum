@@ -150,7 +150,7 @@ func main() {
 		return
 	}
 
-	// сколько операций шифрование/подпись одновременно
+	// how many encrypt/decrypt/sign/validate operations are selected at once
 	ops := 0
 	if encryptPath != "" {
 		ops++
@@ -169,7 +169,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// если не указан --read, берём из encrypt/decrypt/sign
+	// if --read is not set, derive it from encrypt/decrypt/sign flags
 	if readPath == "" {
 		switch {
 		case encryptPath != "":
@@ -181,13 +181,13 @@ func main() {
 		}
 	}
 
-	// импорт identity
+	// identity import
 	if importStr != "" {
 		importIdentity(importStr, useBase32, useBase64, &writePath, force, printPrivate)
 		return
 	}
 
-	// если не generate и не задана identity — показать помощь
+	// if not generating and no identity is provided, show help
 	if generatePath == "" && identityStr == "" {
 		fmt.Println()
 		fmt.Println("No identity provided, cannot continue")
@@ -197,7 +197,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	// лог-левел
+	// log level
 	targetLogLevel := 4 + verbose.Value() - quiet.Value()
 	var configPtr *string
 	if configDir != "" {
@@ -212,7 +212,7 @@ func main() {
 		rns.SetLogLevel(-1)
 	}
 
-	// генерация новой identity
+	// generate a new identity
 	if generatePath != "" {
 		if !force && fileExists(generatePath) {
 			rns.Log("Identity file "+generatePath+" already exists. Not overwriting.", rns.LogError)
@@ -233,10 +233,10 @@ func main() {
 		return
 	}
 
-	// загрузка/recall identity
+	// load/recall identity
 	id := loadIdentity(identityStr, requestUnknown, time.Duration(timeoutSeconds*float64(time.Second)))
 
-	// операции hash/announce/print/export
+	// hash/announce/print/export operations
 	if hashAs != "" {
 		doHash(id, hashAs)
 		return
@@ -254,7 +254,7 @@ func main() {
 		return
 	}
 
-	// далее — файловые операции (encrypt/decrypt/sign/validate)
+	// next: file operations (encrypt/decrypt/sign/validate)
 	doIO(id, encryptPath != "", decryptPath != "", signPath != "", validatePath,
 		&readPath, &writePath, force, useStdin, useStdout)
 }
@@ -390,7 +390,7 @@ func printIdentityKeys(id *rns.Identity, printPriv, useB32, useB64 bool) {
 	}
 }
 
-// экспорт: всегда приватный ключ, как в Python
+// export: always include the private key, like Python
 func exportIdentity(id *rns.Identity, useB32, useB64 bool) {
 	if len(id.GetPrivateKey()) == 0 {
 		rns.Log("Identity doesn't hold a private key, cannot export", rns.LogError)
@@ -476,11 +476,11 @@ func doAnnounce(id *rns.Identity, aspectsStr string) {
 // ---------- identity load / recall ----------
 
 func loadIdentity(arg string, requestUnknown bool, timeout time.Duration) *rns.Identity {
-	// длина усечённого хеша
+	// truncated hash length
 	destLen := (rns.ReticulumTruncatedHashLength / 8) * 2
 	pathCandidate := expandUser(arg)
 
-	// хекс-хеш
+	// hex hash
 	if len(arg) == destLen && !fileExists(pathCandidate) {
 		b, err := hex.DecodeString(arg)
 		if err != nil {
@@ -522,7 +522,7 @@ func loadIdentity(arg string, requestUnknown bool, timeout time.Duration) *rns.I
 		return id
 	}
 
-	// файл
+	// file
 	if !fileExists(pathCandidate) {
 		rns.Log("Specified Identity file not found", rns.LogError)
 		os.Exit(8)
@@ -536,12 +536,12 @@ func loadIdentity(arg string, requestUnknown bool, timeout time.Duration) *rns.I
 	return id
 }
 
-// ---------- файловые операции: sign / validate / encrypt / decrypt ----------
+// ---------- file operations: sign / validate / encrypt / decrypt ----------
 
 func doIO(id *rns.Identity, doEnc, doDec, doSign bool, validatePath string,
 	readPath, writePath *string, force bool, useStdin, useStdout bool) {
 
-	// validate: если не задан --read и validate заканчивается на .rsg → derive
+	// validate: if --read is not set and validate ends with .rsg -> derive input path
 	if validatePath != "" {
 		if *readPath == "" && strings.HasSuffix(strings.ToLower(validatePath), "."+sigExt) {
 			// Python uses replace() here, not just a suffix trim.
@@ -767,7 +767,7 @@ func doIO(id *rns.Identity, doEnc, doDec, doSign bool, validatePath string,
 		os.Exit(0)
 	}
 
-	// если ничего не выбрали
+	// if nothing was selected
 	flag.Usage()
 	os.Exit(0)
 }

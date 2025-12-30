@@ -10,20 +10,20 @@ import (
 
 // ===== Hash helpers =====
 
-// HashSHA256 — удобный синоним для Sha256().
+// HashSHA256 is a convenience alias for Sha256().
 func HashSHA256(data []byte) []byte {
 	return Sha256(data)
 }
 
-// HashSHA512 — удобный синоним для Sha512().
+// HashSHA512 is a convenience alias for Sha512().
 func HashSHA512(data []byte) []byte {
 	return Sha512(data)
 }
 
 // ===== HKDF =====
 
-// HKDFSHA256/512 — обёртки над crypto/hkdf для случаев, когда нужен
-// потоковый вывод (например, как в Python через hashlib).
+// HKDFSHA256/512 are wrappers for cases where streaming output is needed
+// (eg. like Python via hashlib).
 func HKDFSHA256(salt, ikm, info []byte, length int) ([]byte, error) {
 	return hkdfExpand(sha256.New, salt, ikm, info, length)
 }

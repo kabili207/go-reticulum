@@ -64,17 +64,17 @@ func readFile(path string) (string, error) {
 	return string(b), nil
 }
 
-// аналог setuptools.setup, но просто что-то делает с конфигом
+// Rough equivalent of setuptools.setup; currently just prints derived config.
 func setup(cfg setupConfig) {
 	fmt.Printf("Building package %s (%s)\n", cfg.name, cfg.version)
 	fmt.Printf("Pure python: %v\n", pure_python)
 	fmt.Printf("Requirements: %v\n", cfg.install_requires)
 	fmt.Printf("Entry points: %v\n", cfg.entry_points)
-	// здесь можешь добавить реальную сборку/запись файлов
+	// Add real build/file-writing logic here if needed.
 }
 
 func main() {
-	// сохраняем тот же API: флаг --pure
+	// Keep the same API: the --pure flag.
 	flag.BoolVar(&pure_python, "pure", false, "build pure-python wheel")
 	flag.Parse()
 
@@ -106,10 +106,10 @@ func main() {
 
 	excluded_modules := []string{"tests.*", "tests"}
 
-	// find_packages аналога нет, можно подложить свой список
+	// There is no direct find_packages equivalent; provide a package list manually.
 	packages := []string{
 		"RNS",
-		// сюда можно добавить остальные пакеты
+		// Add other packages here if needed.
 	}
 
 	entry_points := map[string][]string{

@@ -380,7 +380,7 @@ func ensureOnlineFirmwarePrepared(paths storagePaths, node *RNode, fwURL, fwVers
 	var expectedHash string
 	if version == "" && (updateFlag || autoinstallFlag) {
 		if noCheck {
-			return PreparedFirmware{}, exitError{Code: 98, Err: errors.New("--nocheck требует явный --fw-version или --fw-url")}
+			return PreparedFirmware{}, exitError{Code: 98, Err: errors.New("--nocheck requires an explicit --fw-version or --fw-url")}
 		}
 		// Python parity: resolve per-board version via latest release.json.
 		info, err := fetchReleaseInfo(firmwareReleaseInfoURL)
@@ -2598,14 +2598,14 @@ const (
 	KISS_ERROR_EEPROM_LOCKED = 0x03
 )
 
-// Escape как в Python
+// Escape mirrors Python behaviour.
 func kissEscape(data []byte) []byte {
 	data = bytesReplace(data, []byte{KISS_FESC}, []byte{KISS_FESC, KISS_TFESC})
 	data = bytesReplace(data, []byte{KISS_FEND}, []byte{KISS_FESC, KISS_TFEND})
 	return data
 }
 
-// маленький helper, чтобы не тащить bytes.ReplaceAll лишний раз
+// small helper to avoid pulling in bytes.ReplaceAll repeatedly
 func bytesReplace(src, old, new []byte) []byte {
 	out := make([]byte, 0, len(src))
 	for i := 0; i < len(src); {
@@ -2632,7 +2632,7 @@ func equalBytes(a, b []byte) bool {
 	return true
 }
 
-// ================== ROM / модели ==================
+// ================== ROM / models ==================
 
 const (
 	ROM_PLATFORM_AVR   = 0x90
@@ -2656,7 +2656,7 @@ const (
 	ROM_MODEL_A5      = 0xA5
 	ROM_MODEL_AA      = 0xAA
 	ROM_MODEL_AC      = 0xAC
-	// ... остальные константы по ROM из Python (PRODUCT_T32_10/20/21, H32_V2/3/4, TBEAM, TDECK и т.д.)
+	// ... other ROM constants from Python (PRODUCT_T32_10/20/21, H32_V2/3/4, TBEAM, TDECK, etc.)
 
 	ROM_BOARD_RNODE         = 0x31
 	ROM_BOARD_HMBRW         = 0x32
@@ -2670,20 +2670,20 @@ const (
 	ROM_BOARD_RAK4631       = 0x51
 )
 
-// Для лаконичности не дублирую весь ROM-блок; его можно просто скопировать из Python
-// один-в-один как const-ы выше.
+// For brevity, the full ROM block is not duplicated here; it can be copied from Python
+// 1:1 as consts above.
 
-// Для models в Go удобнее сделать структуру:
+// For models, in Go it's convenient to use a struct:
 type ModelInfo struct {
 	MinFreq    int    // Hz
 	MaxFreq    int    // Hz
 	MaxOutput  int    // dBm
 	BandString string // "410-525 MHz"
-	FWFile     string // имя прошивки или ""
+	FWFile     string // firmware filename or ""
 	Chip       string // SX1278/SX1262/...
 }
 
-// Полная таблица как в models = {...} в Python:
+// Full table like models = {...} in Python:
 var Models = map[byte]ModelInfo{
 	0xA4: {410000000, 525000000, 14, "410 - 525 MHz", "rnode_firmware.hex", "SX1278"},
 	0xA9: {820000000, 1020000000, 17, "820 - 1020 MHz", "rnode_firmware.hex", "SX1276"},
@@ -2732,14 +2732,14 @@ var Models = map[byte]ModelInfo{
 	0xFF: {100000000, 1100000000, 14, "(Band capabilities unknown)", "", "Unknown"},
 }
 
-// ================== Serial абстракция ==================
+// ================== Serial abstraction ==================
 
 type SerialPort interface {
 	Read(p []byte) (int, error)
 	Write(p []byte) (int, error)
 	Close() error
 
-	// эти два метода надо будет адаптировать под выбранную библиотеку
+	// these two methods must be adapted to the chosen library
 	BytesAvailable() (int, error)
 	IsOpen() bool
 	Name() string
@@ -2807,7 +2807,7 @@ type RNode struct {
 	BitrateKbps        float64
 }
 
-// NewRNode — конструктор
+// NewRNode is the constructor.
 func NewRNode(sp SerialPort) *RNode {
 	return &RNode{
 		Serial:  sp,
@@ -2829,10 +2829,10 @@ func (n *RNode) Disconnect() {
 	}
 }
 
-// ================== ReadLoop (каркас) ==================
+// ================== ReadLoop (skeleton) ==================
 
-// В оригинале используется non-blocking serial.in_waiting.
-// Здесь делаем упрощённо через BytesAvailable() + Read(1).
+// The upstream version uses non-blocking serial.in_waiting.
+// Here it's simplified via BytesAvailable() + Read(1).
 func (n *RNode) ReadLoop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -2881,7 +2881,7 @@ func (n *RNode) ReadLoop() {
 				cmdBuf = cmdBuf[:0]
 
 			case inFrame && len(dataBuf) < 1024:
-				// первый байт — команда
+				// first byte is the command
 				if len(dataBuf) == 0 && cmd == KISS_CMD_UNKNOWN {
 					cmd = byteVal
 				} else {
@@ -2901,8 +2901,8 @@ func (n *RNode) ReadLoop() {
 	}
 }
 
-// Разбор байтов по командам (обрезано до того, что реально нужно чаще всего)
-// Остальное можно дописать по Python при необходимости.
+// Byte parsing by command (trimmed to what's most commonly needed).
+// The rest can be added from Python if needed.
 func (n *RNode) handleKISSByte(
 	cmd *byte,
 	escape *bool,
@@ -2915,7 +2915,7 @@ func (n *RNode) handleKISSByte(
 		KISS_CMD_FREQUENCY, KISS_CMD_BANDWIDTH,
 		KISS_CMD_BT_PIN, KISS_CMD_DEV_HASH, KISS_CMD_HASHES,
 		KISS_CMD_FW_VERSION, KISS_CMD_STAT_RX, KISS_CMD_STAT_TX:
-		// общая логика экранирования
+		// shared escaping logic
 		if b == KISS_FESC {
 			*escape = true
 			return
@@ -2929,7 +2929,7 @@ func (n *RNode) handleKISSByte(
 			*escape = false
 		}
 		*cmdBuf = append(*cmdBuf, b)
-		// дальше — по конкретным длинам
+		// then handle per-command lengths
 		switch *cmd {
 		case KISS_CMD_FREQUENCY:
 			if len(*cmdBuf) == 4 {
@@ -2978,14 +2978,14 @@ func (n *RNode) handleKISSByte(
 			}
 		case KISS_CMD_STAT_RX:
 			if len(*cmdBuf) == 4 {
-				// если нужно, можно сохранить RX-счётчик
+				// if needed, persist RX counter
 			}
 		case KISS_CMD_STAT_TX:
 			if len(*cmdBuf) == 4 {
-				// TX-счётчик
+				// TX counter
 			}
 		default:
-			// ROM_READ / CFG_READ / DATA — просто накопление в dataBuf
+			// ROM_READ / CFG_READ / DATA: just accumulate into dataBuf
 			*dataBuf = append(*dataBuf, b)
 		}
 	case KISS_CMD_BOARD:
@@ -3014,7 +3014,7 @@ func (n *RNode) handleKISSByte(
 		rssi := int(b) - 157
 		_ = rssi
 	case KISS_CMD_STAT_SNR:
-		// знаковый 8-бит * 0.25
+		// signed 8-bit * 0.25
 		s := int(int8(b)) * 25 / 100
 		_ = s
 	case KISS_CMD_ERROR:
@@ -3031,7 +3031,7 @@ func (n *RNode) handleKISSByte(
 	}
 }
 
-// ================== служебные методы ==================
+// ================== helper methods ==================
 
 func (n *RNode) updateBitrate() {
 	defer func() {
@@ -3042,7 +3042,7 @@ func (n *RNode) updateBitrate() {
 	if n.RSF == 0 || n.RCR == 0 || n.RBandwidth == 0 {
 		return
 	}
-	// формула как в Python
+	// formula like Python
 	b := float64(n.RSF) * ((4.0 / float64(n.RCR)) / (math.Pow(2, float64(n.RSF)) / (float64(n.RBandwidth) / 1000.0))) * 1000.0
 	n.Bitrate = b
 	n.BitrateKbps = math.Round(b/10.0) / 100.0
@@ -3057,7 +3057,7 @@ func (n *RNode) updateVersion() {
 	}
 }
 
-// ================== KISS-команды высокого уровня ==================
+// ================== high-level KISS commands ==================
 
 func (n *RNode) Detect() error {
 	cmd := []byte{
@@ -3536,8 +3536,8 @@ func (n *RNode) DownloadCfgSector(wait time.Duration) error {
 	return errors.New("timed out waiting for config sector")
 }
 
-// Остальные части Python-утилиты (загрузка прошивок, подписи, CLI и т.п.)
-// ещё предстоит перенести сюда.
+// The remaining parts of the Python utility (firmware downloads, signatures, CLI, etc.)
+// are still pending porting.
 
 func intToBytes(v int) []byte {
 	return []byte{

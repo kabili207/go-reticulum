@@ -20,7 +20,7 @@ var (
 	tMax   time.Duration
 )
 
-// ---------- утилиты ----------
+// ---------- utilities ----------
 
 func clampSecret(b []byte) {
 	// _fix_secret
@@ -29,7 +29,7 @@ func clampSecret(b []byte) {
 	b[31] |= 0x40  // n |= 64 << 8 * 31
 }
 
-// ---------- публичный ключ ----------
+// ---------- public key ----------
 
 type PublicKey struct {
 	x []byte // 32 bytes, little-endian
@@ -50,7 +50,7 @@ func (p *PublicKey) PublicBytes() []byte {
 	return out
 }
 
-// ---------- приватный ключ ----------
+// ---------- private key ----------
 
 type PrivateKey struct {
 	a []byte // 32 bytes, clamped
@@ -90,7 +90,7 @@ func (k *PrivateKey) PublicKey() (*PublicKey, error) {
 	return &PublicKey{x: pub.Bytes()}, nil
 }
 
-// Exchange — аналог X25519PrivateKey.exchange(), с выравниванием времени
+// Exchange mirrors X25519PrivateKey.exchange(), with timing alignment.
 func (k *PrivateKey) Exchange(peer interface{}) ([]byte, error) {
 	var peerPub *PublicKey
 	switch v := peer.(type) {
@@ -106,8 +106,8 @@ func (k *PrivateKey) Exchange(peer interface{}) ([]byte, error) {
 		return nil, errors.New("x25519: unsupported peer key type")
 	}
 
-	// при желании — как в curve25519(): fixBasePoint(peerPub.x)
-	// но обычно публичный ключ уже корректный X25519
+	// Optionally, like curve25519(): fixBasePoint(peerPub.x)
+	// but normally the public key is already a valid X25519 key.
 
 	start := time.Now()
 
@@ -127,7 +127,7 @@ func (k *PrivateKey) Exchange(peer interface{}) ([]byte, error) {
 	end := time.Now()
 	duration := end.Sub(start)
 
-	// логика T_CLEAR / T_MAX как в Python
+	// T_CLEAR / T_MAX logic like Python
 	if tClear.IsZero() {
 		tClear = end.Add(DelayWindow)
 	}
@@ -148,7 +148,7 @@ func (k *PrivateKey) Exchange(peer interface{}) ([]byte, error) {
 		}
 
 		if sleep := time.Until(target); sleep > 0 {
-			_ = sleep // errors игнорируем как в Python
+			_ = sleep // ignore errors like Python
 			time.Sleep(sleep)
 		}
 	} else if duration > tMax {
