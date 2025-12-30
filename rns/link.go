@@ -32,8 +32,8 @@ const (
 	linkStaleFactor        = 2
 	linkWatchdogMaxSleep   = 5 * time.Second
 	// Python parity: default link mode is AES_128_CBC (0x00).
-	linkDefaultMode        = LinkModeAES128CBC
-	linkDefaultPerHop      = time.Duration(DEFAULT_PER_HOP_TIMEOUT) * time.Second
+	linkDefaultMode   = LinkModeAES128CBC
+	linkDefaultPerHop = time.Duration(DEFAULT_PER_HOP_TIMEOUT) * time.Second
 )
 
 const (
@@ -732,40 +732,7 @@ func (l *Link) findOutgoingResource(hash []byte) *Resource {
 }
 
 func (l *Link) handleRequest(requestID []byte, unpacked []any) {
-	if len(unpacked) < 3 {
-		Log("Malformed request payload received, ignoring", LOG_WARNING)
-		return
-	}
-
-	requestedAt := timeFromAny(unpacked[0])
-	pathHash := bytesFromAny(unpacked[1])
-	if len(pathHash) == 0 {
-		Log("Request without path hash received, ignoring", LOG_WARNING)
-		return
-	}
-	requestData := unpacked[2]
-
-	l.mu.Lock()
-	dest := l.destination
-	remoteID := l.remoteIdentity
-	linkID := append([]byte{}, l.LinkID...)
-	l.mu.Unlock()
-
-	if dest == nil {
-		return
-	}
-
-	handler, ok := dest.requestHandlers[string(pathHash)]
-	if !ok || handler == nil {
-		return
-	}
-
-	resp, allowed := dest.DispatchRequest(handler.Path, requestData, requestID, linkID, remoteID, requestedAt)
-	if !allowed || resp == nil {
-		return
-	}
-
-	l.sendResponsePayload(handler, requestID, resp)
+	_ = l.handleRequestAndReportAllowed(requestID, unpacked, nil)
 }
 
 func (l *Link) sendResponsePayload(handler *RequestHandler, requestID []byte, response any) {
@@ -1021,7 +988,9 @@ func (l *Link) Receive(packet *Packet) {
 		packet.Context != PacketCtxLRProof &&
 		packet.Context != PacketCtxLRRTT &&
 		packet.Context != PacketCtxLinkClose &&
-		packet.Context != PacketCtxLinkIdentify {
+		packet.Context != PacketCtxLinkIdentify &&
+		// Python parity: requests that are not allowed should not be proven as delivered.
+		packet.Context != PacketCtxRequest {
 		l.ProvePacket(packet)
 	}
 
@@ -1520,12 +1489,11 @@ func (l *Link) Identify(identity *Identity) {
 		Log("Only the link initiator can identify towards the remote peer", LOG_DEBUG)
 		return
 	}
-	if l.Status != LinkActive || l.destination == nil || len(l.LinkID) == 0 {
+	if l.Status != LinkActive || len(l.LinkID) == 0 {
 		l.mu.Unlock()
 		Log("Link is not ready to send identity information", LOG_DEBUG)
 		return
 	}
-	dest := l.destination
 	linkID := append([]byte{}, l.LinkID...)
 	l.mu.Unlock()
 
@@ -1544,7 +1512,7 @@ func (l *Link) Identify(identity *Identity) {
 
 	payload := append(append([]byte{}, pub...), sig...)
 	packet := NewPacket(
-		dest,
+		l,
 		payload,
 		WithPacketContext(PacketCtxLinkIdentify),
 		WithCreateReceipt(false),
@@ -1820,7 +1788,51 @@ func (l *Link) handleRequestPacket(packet *Packet) {
 		Log(fmt.Sprintf("%s received malformed request payload: %v", l, err), LOG_WARNING)
 		return
 	}
-	l.handleRequest(packet.GetTruncatedHash(), unpacked)
+	if l.handleRequestAndReportAllowed(packet.GetTruncatedHash(), unpacked, packet) {
+		l.ProvePacket(packet)
+	}
+}
+
+func (l *Link) handleRequestAndReportAllowed(requestID []byte, unpacked []any, packet *Packet) bool {
+	if len(unpacked) < 3 {
+		Log("Malformed request payload received, ignoring", LOG_WARNING)
+		return false
+	}
+
+	requestedAt := timeFromAny(unpacked[0])
+	pathHash := bytesFromAny(unpacked[1])
+	if len(pathHash) == 0 {
+		Log("Request without path hash received, ignoring", LOG_WARNING)
+		return false
+	}
+	requestData := unpacked[2]
+
+	l.mu.Lock()
+	dest := l.destination
+	remoteID := l.remoteIdentity
+	linkID := append([]byte{}, l.LinkID...)
+	l.mu.Unlock()
+
+	if dest == nil {
+		return false
+	}
+
+	handler, ok := dest.requestHandlers[string(pathHash)]
+	if !ok || handler == nil {
+		return false
+	}
+
+	resp, allowed := dest.DispatchRequest(handler.Path, requestData, requestID, linkID, remoteID, requestedAt)
+	if !allowed {
+		return false
+	}
+	if resp == nil {
+		// Allowed request with nil response still counts as delivered.
+		return true
+	}
+
+	l.sendResponsePayload(handler, requestID, resp)
+	return true
 }
 
 func (l *Link) handleResponsePacket(packet *Packet) {

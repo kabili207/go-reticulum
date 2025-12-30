@@ -9,10 +9,20 @@ mkdir -p "$OUT_DIR"
 
 export RNS_INTEGRATION="${RNS_INTEGRATION:-1}"
 
+mkdir -p "$ROOT/.gocache" "$ROOT/.gotmp" "$ROOT/.gopath" "$ROOT/.gomodcache"
+export GOCACHE="$ROOT/.gocache"
+export GOTMPDIR="$ROOT/.gotmp"
+export GOPATH="$ROOT/.gopath"
+export GOMODCACHE="$ROOT/.gomodcache"
+
 echo "[go] root=$ROOT"
 echo "[go] out=$OUT_DIR"
 echo "[go] RNS_INTEGRATION=$RNS_INTEGRATION"
 echo "[go] RUN_SLOW_TESTS=${RUN_SLOW_TESTS:-}"
+echo "[go] GOCACHE=$GOCACHE"
+echo "[go] GOTMPDIR=$GOTMPDIR"
+echo "[go] GOPATH=$GOPATH"
+echo "[go] GOMODCACHE=$GOMODCACHE"
 echo
 
 cd "$ROOT"

@@ -67,6 +67,21 @@ stop_proc() {
   return 0
 }
 
+run_status_text() {
+  local out_file="$1"
+  shift
+  if ! "$PYTHON" "$ROOT/tests/tools/timeout_exec.py" --timeout "$STATUS_CMD_TIMEOUT_SECS" -- "$@" >"$out_file" 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+normalize_text() {
+  local in_file="$1"
+  local out_file="$2"
+  "$PYTHON" "$ROOT/tests/tools/normalize_rnstatus_text.py" <"$in_file" >"$out_file"
+}
+
 run_one() {
   local label="$1"
   local template_dir="$2"
@@ -126,6 +141,34 @@ run_one() {
     return 1
   fi
   "$PYTHON" "$ROOT/tests/tools/normalize_rnstatus_json.py" <"$py_json" >"$py_norm"
+
+  # Text-mode parity cases (normalised).
+  local -a TEXT_CASES=(
+    "default::"
+    "all::-a"
+    "announce_stats::-A"
+    "link_stats::-l"
+    "totals::-t"
+    "sort_rate::-s rate"
+    "sort_rate_rev::-s rate -r"
+    "filter_default::Default"
+  )
+
+  for case in "${TEXT_CASES[@]}"; do
+    local case_label="${case%%::*}"
+    local case_args="${case#*::}"
+    local py_txt="$OUT_DIR/$label.$case_label.python.rnstatus.txt"
+    local py_txt_norm="$OUT_DIR/$label.$case_label.python.rnstatus.txt.norm"
+
+    # shellcheck disable=SC2086
+    if ! run_status_text "$py_txt" "$PYTHON" "$ROOT/python/RNS/Utilities/rnstatus.py" --config "$run_dir" $case_args; then
+      echo "[cmp] $label python rnstatus ($case_label) timed out; log: $py_log"
+      stop_proc "$py_pid"
+      rm -rf "$run_dir"
+      return 1
+    fi
+    normalize_text "$py_txt" "$py_txt_norm"
+  done
   stop_proc "$py_pid"
 
   # --- go ---
@@ -145,13 +188,48 @@ run_one() {
     return 1
   fi
   "$PYTHON" "$ROOT/tests/tools/normalize_rnstatus_json.py" <"$go_json" >"$go_norm"
+
+  for case in "${TEXT_CASES[@]}"; do
+    local case_label="${case%%::*}"
+    local case_args="${case#*::}"
+    local go_txt="$OUT_DIR/$label.$case_label.go.rnstatus.txt"
+    local go_txt_norm="$OUT_DIR/$label.$case_label.go.rnstatus.txt.norm"
+
+    # shellcheck disable=SC2086
+    if ! run_status_text "$go_txt" "$GO_BIN_DIR/rnstatus" -config "$run_dir" $case_args; then
+      echo "[cmp] $label go rnstatus ($case_label) timed out; log: $go_log"
+      stop_proc "$go_pid"
+      rm -rf "$run_dir"
+      return 1
+    fi
+    normalize_text "$go_txt" "$go_txt_norm"
+  done
   stop_proc "$go_pid"
 
   # --- compare ---
+  local ok=1
   if diff -u "$py_norm" "$go_norm" >"$diff_out"; then
-    echo "[cmp] $label OK"
+    ok=0
   else
-    echo "[cmp] $label DIFF: $diff_out"
+    echo "[cmp] $label JSON DIFF: $diff_out"
+    ok=1
+  fi
+
+  for case in "${TEXT_CASES[@]}"; do
+    local case_label="${case%%::*}"
+    local py_txt_norm="$OUT_DIR/$label.$case_label.python.rnstatus.txt.norm"
+    local go_txt_norm="$OUT_DIR/$label.$case_label.go.rnstatus.txt.norm"
+    local tdiff="$OUT_DIR/$label.$case_label.text.diff"
+    if diff -u "$py_txt_norm" "$go_txt_norm" >"$tdiff"; then
+      :
+    else
+      echo "[cmp] $label TEXT($case_label) DIFF: $tdiff"
+      ok=1
+    fi
+  done
+
+  if [[ "$ok" -eq 0 ]]; then
+    echo "[cmp] $label OK"
   fi
 
   rm -rf "$run_dir"

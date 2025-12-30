@@ -6,7 +6,7 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
 
 ## Extra regression helpers
 
-- `tests/integration/compare_rnstatus_py_vs_go.sh` — runs `rnsd` (Python and Go) for each template config under `configs/testing/**/config`, fetches `rnstatus -j -a`, normalizes output and diffs it.
+- `tests/integration/compare_rnstatus_py_vs_go.sh` — runs `rnsd` (Python and Go) for each template config under `configs/testing/**/config`, fetches `rnstatus -j -a`, normalizes output and diffs it, plus compares text-mode output across a small flag matrix.
   - Requires: `python3`, Go toolchain.
   - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnstatus/`.
   - Env:
@@ -38,3 +38,9 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
 - `tests/integration/compare_rncp_py_vs_go.sh` — compares `rncp` CLI behaviour (Python vs Go) offline: `--version`, `-h`, destination validation, `-p` identity printing via a shared identity file (`-i`), and basic exit-code parity for common error paths.
   - Requires: `python3`, Go toolchain.
   - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rncp/`.
+- `tests/integration/compare_rnx_py_vs_go.sh` — compares `rnx` CLI behaviour (Python vs Go) offline: `--version`, `-h`, destination validation and exit codes (including `Path not found` timeout), and `-p` identity printing via a shared identity file (`-i`).
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnx/`.
+- `tests/integration/compare_rnx_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, then exercises `rnx` listener/client mode: `-n` vs `-a`, `-N`, `-b` (no-announce), `--stdout/--stderr` limits and `-m` mirror exit code (summary parity).
+  - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
+  - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rnx_two_nodes/`.

@@ -975,8 +975,13 @@ func (r *Reticulum) startLocalInterface() error {
 
 		// Python parity: the first instance creates a local shared-instance interface.
 		siName := "default"
-		if strings.TrimSpace(r.LocalSocketPath) != "" {
-			siName = strings.TrimSpace(r.LocalSocketPath)
+		if r.UseAFUnix {
+			if strings.TrimSpace(r.LocalSocketPath) != "" {
+				siName = strings.TrimSpace(r.LocalSocketPath)
+			}
+		} else {
+			// Python uses the shared instance port in the name when shared instance runs over TCP.
+			siName = fmt.Sprintf("%d", r.localInterfacePort)
 		}
 		si := &Interface{
 			Name:              fmt.Sprintf("Shared Instance[%s]", siName),
@@ -987,10 +992,12 @@ func (r *Reticulum) startLocalInterface() error {
 			Online:            true,
 			AutoconfigureMTU:  true,
 		}
+		// Python reports the shared instance interface as a 1 Gbps local link by default.
+		si.Bitrate = 1000000000
 		if br := SharedInstanceForcedBitrate(); br > 0 {
 			si.Bitrate = br
-			si.ForceBitrateLatency = true
 		}
+		si.ForceBitrateLatency = true
 		si.OptimiseMTU()
 		AddInterface(si)
 		si.SetClientCountFunc(func() int {
@@ -1035,8 +1042,13 @@ func (r *Reticulum) startLocalInterface() error {
 
 		// Python parity: create a LocalInterface client interface placeholder.
 		siName := "default"
-		if strings.TrimSpace(r.LocalSocketPath) != "" {
-			siName = strings.TrimSpace(r.LocalSocketPath)
+		if r.UseAFUnix {
+			if strings.TrimSpace(r.LocalSocketPath) != "" {
+				siName = strings.TrimSpace(r.LocalSocketPath)
+			}
+		} else {
+			// Python uses the shared instance port in the name when shared instance runs over TCP.
+			siName = fmt.Sprintf("%d", r.localInterfacePort)
 		}
 		si := &Interface{
 			Name:                fmt.Sprintf("LocalInterface[%s]", siName),
@@ -1048,10 +1060,11 @@ func (r *Reticulum) startLocalInterface() error {
 			AutoconfigureMTU:    true,
 			LocalIsSharedClient: true,
 		}
+		si.Bitrate = 1000000000
 		if br := SharedInstanceForcedBitrate(); br > 0 {
 			si.Bitrate = br
-			si.ForceBitrateLatency = true
 		}
+		si.ForceBitrateLatency = true
 		si.OptimiseMTU()
 		AddInterface(si)
 		r.SharedInstanceInterface = si
@@ -2859,16 +2872,13 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		return resp
 	}
 	stats := map[string]any{}
-	entries := make([]map[string]any, 0, len(Interfaces))
+	entriesShared := make([]map[string]any, 0, 1)
+	entriesLocal := make([]map[string]any, 0, 1)
+	entriesOther := make([]map[string]any, 0, len(Interfaces))
 
 	for _, ifc := range Interfaces {
 		if ifc == nil {
 			continue
-		}
-
-		var clients any = nil
-		if cc := ifc.ClientCount(); cc != nil {
-			clients = *cc
 		}
 
 		var parentName any = nil
@@ -2887,37 +2897,12 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		}
 
 		entry := map[string]any{
-			"clients":                     clients,
-			"parent_interface_name":       parentName,
-			"parent_interface_hash":       parentHash,
-			"i2p_connectable":             nil,
-			"i2p_b32":                     nil,
-			"tunnelstate":                 nil,
-			"airtime_short":               nil,
-			"airtime_long":                nil,
-			"channel_load_short":          nil,
-			"channel_load_long":           nil,
-			"noise_floor":                 nil,
-			"interference":                nil,
-			"interference_last_ts":        nil,
-			"interference_last_dbm":       nil,
-			"cpu_temp":                    nil,
-			"cpu_load":                    nil,
-			"mem_load":                    nil,
-			"active_tasks":                nil,
-			"switch_id":                   nil,
-			"via_switch_id":               nil,
-			"endpoint_id":                 nil,
-			"battery_state":               nil,
-			"battery_percent":             nil,
 			"bitrate":                     ifc.Bitrate,
 			"rxs":                         ifc.CurRxSpeed,
 			"txs":                         ifc.CurTxSpeed,
-			"peers":                       nil,
 			"ifac_signature":              ifc.IFACSignature,
 			"ifac_size":                   ifc.IFACSize,
 			"ifac_netname":                ifc.IFACNetnameVal,
-			"announce_queue":              nil,
 			"name":                        name,
 			"short_name":                  ifc.Name,
 			"hash":                        ifHash,
@@ -2929,6 +2914,15 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 			"held_announces":              ifc.HeldAnnouncesCount(),
 			"status":                      ifc.Online,
 			"mode":                        ifc.Mode,
+		}
+		if cc := ifc.ClientCount(); cc != nil {
+			entry["clients"] = *cc
+		}
+		if parentName != nil {
+			entry["parent_interface_name"] = parentName
+		}
+		if parentHash != nil {
+			entry["parent_interface_hash"] = parentHash
 		}
 		if pc := ifc.AutoPeerCount(); pc != nil {
 			entry["peers"] = *pc
@@ -2996,10 +2990,17 @@ func (r *Reticulum) GetInterfaceStats() map[string]any {
 		}
 		entry["announce_queue"] = ifc.AnnounceQueueCount()
 
-		entries = append(entries, entry)
+		switch {
+		case strings.HasPrefix(name, "Shared Instance["):
+			entriesShared = append(entriesShared, entry)
+		case strings.HasPrefix(name, "LocalInterface["):
+			entriesLocal = append(entriesLocal, entry)
+		default:
+			entriesOther = append(entriesOther, entry)
+		}
 	}
 
-	stats["interfaces"] = entries
+	stats["interfaces"] = append(append(entriesShared, entriesOther...), entriesLocal...)
 	stats["rxb"] = TrafficRXB
 	stats["txb"] = TrafficTXB
 	stats["rxs"] = SpeedRX

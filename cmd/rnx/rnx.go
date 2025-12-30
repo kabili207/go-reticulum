@@ -253,15 +253,15 @@ func main() {
 				detailed,
 				mirror,
 				noID,
-			destHex,
-			cmdLine,
-			nil,
-			optionalIntValue(stdoutLim),
-			optionalIntValue(stderrLim),
-			timeout,
-			resultTimeoutValue(resultTimeout),
-			true,
-		)
+				destHex,
+				cmdLine,
+				nil,
+				optionalIntValue(stdoutLim),
+				optionalIntValue(stderrLim),
+				timeout,
+				resultTimeoutValue(resultTimeout),
+				true,
+			)
 		}
 	}
 
@@ -470,7 +470,7 @@ func listen(
 	}
 
 	if printIdentity {
-		fmt.Println("Identity     :", identity.String())
+		fmt.Println("Identity     :", rns.PrettyHex(identity.Hash))
 		fmt.Println("Listening on :", rns.PrettyHex(dest.Hash()))
 		return nil
 	}
@@ -501,7 +501,8 @@ func listen(
 		}
 	}
 
-	rns.Log("rnx listening for commands on "+rns.PrettyHex(dest.Hash()), rns.LogInfo)
+	// Python uses RNS.log(..., level=3) by default (Notice).
+	rns.Log("rnx listening for commands on "+rns.PrettyHex(dest.Hash()), rns.LogNotice)
 
 	if !disableAnnounce {
 		dest.Announce(nil, false, nil, nil, true)
@@ -717,15 +718,15 @@ func execute(
 		}
 	}
 
-		if link == nil || link.Status == rns.LinkClosed || link.Status == rns.LinkPending {
-			var err error
-			link, err = rns.NewOutgoingLink(listenerDest, rns.LinkModeDefault, nil, nil)
-			if err != nil {
-				fmt.Println("Could not create link:", err)
-				os.Exit(243)
-			}
-			linkIdentified = false
+	if link == nil || link.Status == rns.LinkClosed || link.Status == rns.LinkPending {
+		var err error
+		link, err = rns.NewOutgoingLink(listenerDest, rns.LinkModeDefault, nil, nil)
+		if err != nil {
+			fmt.Println("Could not create link:", err)
+			os.Exit(243)
 		}
+		linkIdentified = false
+	}
 
 	ok := spin(func() bool { return link.Status == rns.LinkActive },
 		"Establishing link with "+rns.PrettyHex(destHash),
@@ -738,6 +739,10 @@ func execute(
 	if !noID && !linkIdentified {
 		link.Identify(identity)
 		linkIdentified = true
+		// Ensure the identify packet is sent before the request packet.
+		// Python sends identify() immediately before request(), and callers expect
+		// allow-list listeners to reliably see the remote identity in time.
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	var stdinBytes any

@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -280,6 +281,22 @@ type TrafficCounter struct {
 func (i *Interface) String() string {
 	if i == nil {
 		return "<nil>"
+	}
+	if strings.EqualFold(i.Type, "TCPClientInterface") && i.tcpClient != nil {
+		return i.tcpClient.String()
+	}
+	if strings.EqualFold(i.Type, "TCPServerInterface") && i.tcpServer != nil {
+		return i.tcpServer.String()
+	}
+	if strings.EqualFold(i.Type, "UDPInterface") {
+		bind := i.udpBindAddr
+		fwd := i.udpForwardAddr
+		if bind != nil {
+			return fmt.Sprintf("UDPInterface[%s/%s]", i.Name, bind.String())
+		}
+		if fwd != nil {
+			return fmt.Sprintf("UDPInterface[%s/%s]", i.Name, fwd.String())
+		}
 	}
 	if i.Name != "" {
 		return i.Name

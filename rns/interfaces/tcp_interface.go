@@ -612,6 +612,13 @@ type TCPServerInterface struct {
 	txb atomic.Uint64
 }
 
+func (t *TCPServerInterface) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TCPServerInterface[%s/%s]", t.Name, t.ListenAddr)
+}
+
 func NewTCPServer(owner TCPOwner, log TCPLog, name, listenAddr string, kiss, i2p bool) *TCPServerInterface {
 	return &TCPServerInterface{
 		Owner:       owner,
@@ -690,19 +697,19 @@ func NewTCPClientInterfaceFromConfig(cfg TCPClientConfig) (*Interface, error) {
 		return nil, errors.New("tcp client config missing target_host")
 	}
 
-		ifc := &Interface{
-			Name:              cfg.Name,
-			Type:              "TCPClientInterface",
-			IN:                true,
-			OUT:               true,
-			DriverImplemented: true,
-			Online:            false,
-			Bitrate:           TCP_BITRATE_GUESS,
-			HWMTU:             TCP_HW_MTU,
-			AutoconfigureMTU:  true,
-		}
-		// Python parity: non-KISS TCP interfaces request a tunnel by default.
-		ifc.WantsTunnel = !cfg.KISSFraming
+	ifc := &Interface{
+		Name:              cfg.Name,
+		Type:              "TCPClientInterface",
+		IN:                true,
+		OUT:               true,
+		DriverImplemented: true,
+		Online:            false,
+		Bitrate:           TCP_BITRATE_GUESS,
+		HWMTU:             TCP_HW_MTU,
+		AutoconfigureMTU:  true,
+	}
+	// Python parity: non-KISS TCP interfaces request a tunnel by default.
+	ifc.WantsTunnel = !cfg.KISSFraming
 	// Match Python TCPInterface.DEFAULT_IFAC_SIZE.
 	ifc.IFACSize = TCP_DEFAULT_IFAC_SIZE
 	if cfg.FixedMTU > 0 {
@@ -826,10 +833,6 @@ func NewTCPServerFromConfig(owner TCPOwner, log TCPLog, cfg TCPServerConfig) (*T
 	}
 
 	return s, nil
-}
-
-func (s *TCPServerInterface) String() string {
-	return fmt.Sprintf("TCPServerInterface[%s/%s]", s.Name, s.ListenAddr)
 }
 
 func (s *TCPServerInterface) Clients() int {
