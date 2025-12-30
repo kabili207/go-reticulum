@@ -102,9 +102,9 @@ type TCPClientInterface struct {
 	MaxReconnectTry *int // nil = infinite
 	ConnectTimeout  time.Duration
 
-	HWMTU    int
-	Bitrate  int
-	IFACSize int
+	HWMTU          int
+	Bitrate        int
+	IFACSize       int
 	IFACNetnameVal string
 	IFACNetkeyVal  string
 	IFACKey        []byte
@@ -134,19 +134,19 @@ type TCPClientInterface struct {
 
 func NewTCPClientInitiator(owner TCPOwner, log TCPLog, name, host string, port int, kiss, i2p bool) *TCPClientInterface {
 	iface := &TCPClientInterface{
-		Owner:          owner,
-		Log:            log,
-		Name:           name,
-		TargetHost:     host,
-		TargetPort:     port,
-		KISSFraming:    kiss,
-		I2PTunneled:    i2p,
-		Initiator:      true,
-		ReconnectWait:  5 * time.Second,
-		ConnectTimeout: 5 * time.Second,
-		HWMTU:          TCP_HW_MTU,
-		Bitrate:        TCP_BITRATE_GUESS,
-		IFACSize:       TCP_DEFAULT_IFAC_SIZE,
+		Owner:            owner,
+		Log:              log,
+		Name:             name,
+		TargetHost:       host,
+		TargetPort:       port,
+		KISSFraming:      kiss,
+		I2PTunneled:      i2p,
+		Initiator:        true,
+		ReconnectWait:    5 * time.Second,
+		ConnectTimeout:   5 * time.Second,
+		HWMTU:            TCP_HW_MTU,
+		Bitrate:          TCP_BITRATE_GUESS,
+		IFACSize:         TCP_DEFAULT_IFAC_SIZE,
 		AutoconfigureMTU: true,
 	}
 	iface.neverConn.Store(true)
@@ -155,15 +155,15 @@ func NewTCPClientInitiator(owner TCPOwner, log TCPLog, name, host string, port i
 
 func NewTCPClientFromAccepted(owner TCPOwner, log TCPLog, name string, c net.Conn, kiss, i2p bool) *TCPClientInterface {
 	iface := &TCPClientInterface{
-		Owner:       owner,
-		Log:         log,
-		Name:        name,
-		KISSFraming: kiss,
-		I2PTunneled: i2p,
-		Initiator:   false,
-		HWMTU:       TCP_HW_MTU,
-		Bitrate:     TCP_BITRATE_GUESS,
-		IFACSize:    TCP_DEFAULT_IFAC_SIZE,
+		Owner:            owner,
+		Log:              log,
+		Name:             name,
+		KISSFraming:      kiss,
+		I2PTunneled:      i2p,
+		Initiator:        false,
+		HWMTU:            TCP_HW_MTU,
+		Bitrate:          TCP_BITRATE_GUESS,
+		IFACSize:         TCP_DEFAULT_IFAC_SIZE,
 		AutoconfigureMTU: true,
 	}
 	iface.setConn(c)
@@ -581,9 +581,9 @@ type TCPServerInterface struct {
 	I2PTunneled bool
 	KISSFraming bool
 
-	HWMTU int
+	HWMTU    int
 	FixedMTU bool
-	Bitrate int
+	Bitrate  int
 
 	PreferIPv6 bool
 	Device     string
@@ -640,7 +640,7 @@ type TCPServerConfig struct {
 
 	FixedMTU int // 0 = default TCP_HW_MTU
 
-	IFACSize   int
+	IFACSize    int
 	IFACNetname string
 	IFACNetkey  string
 }
@@ -690,17 +690,21 @@ func NewTCPClientInterfaceFromConfig(cfg TCPClientConfig) (*Interface, error) {
 		return nil, errors.New("tcp client config missing target_host")
 	}
 
-	ifc := &Interface{
-		Name:              cfg.Name,
-		Type:              "TCPClientInterface",
-		IN:                true,
-		OUT:               true,
-		DriverImplemented: true,
-		Online:            false,
-		Bitrate:           TCP_BITRATE_GUESS,
-		HWMTU:             TCP_HW_MTU,
-		AutoconfigureMTU:  true,
-	}
+		ifc := &Interface{
+			Name:              cfg.Name,
+			Type:              "TCPClientInterface",
+			IN:                true,
+			OUT:               true,
+			DriverImplemented: true,
+			Online:            false,
+			Bitrate:           TCP_BITRATE_GUESS,
+			HWMTU:             TCP_HW_MTU,
+			AutoconfigureMTU:  true,
+		}
+		// Python parity: non-KISS TCP interfaces request a tunnel by default.
+		ifc.WantsTunnel = !cfg.KISSFraming
+	// Match Python TCPInterface.DEFAULT_IFAC_SIZE.
+	ifc.IFACSize = TCP_DEFAULT_IFAC_SIZE
 	if cfg.FixedMTU > 0 {
 		ifc.HWMTU = cfg.FixedMTU
 		ifc.FixedMTU = true

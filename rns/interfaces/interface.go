@@ -151,6 +151,10 @@ type Interface struct {
 	RPT  bool
 	Mode int
 
+	// WantsTunnel mirrors Python interface.wants_tunnel.
+	// If true, the transport should synthesize a tunnel for this interface.
+	WantsTunnel bool
+
 	Bitrate     int
 	HWMTU       int
 	AnnounceCap float64
@@ -414,7 +418,11 @@ func (i *Interface) I2PB32() *string {
 		return nil
 	}
 	if s, ok := i.i2pClient.b32.Load().(string); ok && strings.TrimSpace(s) != "" {
-		return &s
+		if strings.HasSuffix(s, ".b32.i2p") {
+			return &s
+		}
+		withSuffix := s + ".b32.i2p"
+		return &withSuffix
 	}
 	return nil
 }
@@ -570,6 +578,9 @@ func (i *Interface) RNodeInterferenceLast() (ts *float64, dbm *int) {
 
 func (i *Interface) RNodeBatteryState() *string {
 	if i == nil || !strings.EqualFold(i.Type, "RNodeInterface") || i.rnodeSingle == nil {
+		return nil
+	}
+	if i.rnodeSingle.batteryState == BatteryUnknown {
 		return nil
 	}
 	s := i.rnodeSingle.BatteryStateString()

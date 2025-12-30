@@ -102,7 +102,7 @@ func StartLocalInterfaceServer(cfg LocalConfig, onNewClient func(*Interface)) (n
 				Name:              fmt.Sprintf("LocalInterface[%s]", ifName),
 				Type:              "LocalInterface",
 				IN:                true,
-				OUT:               false, // Python LocalClientInterface.OUT = False
+				OUT:               false,
 				DriverImplemented: true,
 				Online:            true,
 				Bitrate:           1_000_000_000,
@@ -111,6 +111,9 @@ func StartLocalInterfaceServer(cfg LocalConfig, onNewClient func(*Interface)) (n
 			}
 			if cfg.Parent != nil {
 				ifc.Parent = cfg.Parent
+				// Mirror Python: spawned interfaces inherit IN/OUT from the server interface.
+				ifc.IN = cfg.Parent.IN
+				ifc.OUT = cfg.Parent.OUT
 				if cfg.Parent.Bitrate > 0 {
 					ifc.Bitrate = cfg.Parent.Bitrate
 				}
@@ -137,9 +140,10 @@ func ConnectLocalInterfaceClient(cfg LocalConfig, ifc *Interface) error {
 	if ifc == nil {
 		return errors.New("nil interface")
 	}
-	// Python LocalClientInterface defaults to OUT=False (even though it can transmit).
 	ifc.IN = true
-	ifc.OUT = false
+	// Python Reticulum sets OUT=True for the LocalClientInterface used to connect to
+	// the local shared instance.
+	ifc.OUT = true
 	if ifc.Bitrate == 0 {
 		ifc.Bitrate = 1_000_000_000
 	}

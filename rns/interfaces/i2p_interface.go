@@ -207,6 +207,7 @@ func NewI2PInterface(name string, kv map[string]string) (*Interface, error) {
 		DriverImplemented: true,
 		Bitrate:           i2pBitrateGuess,
 		HWMTU:             i2pInterfaceHWMTU,
+		IFACSize:          16, // Python: DEFAULT_IFAC_SIZE = 16
 	}
 
 	driver := &I2PClientDriver{
@@ -218,6 +219,7 @@ func NewI2PInterface(name string, kv map[string]string) (*Interface, error) {
 	}
 	driver.b32.Store("")
 	iface.i2pClient = driver
+	iface.clientCount = driver.ClientCount
 	iface.clientCount = driver.ClientCount
 
 	if err := driver.start(); err != nil {

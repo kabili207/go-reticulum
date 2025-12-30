@@ -975,6 +975,7 @@ func (r *Reticulum) startLocalInterface() error {
 		si := &Interface{
 			Name:              fmt.Sprintf("Shared Instance[%s]", siName),
 			Type:              "LocalInterface",
+			IN:                true,
 			OUT:               true,
 			DriverImplemented: true,
 			Online:            true,
@@ -1034,6 +1035,7 @@ func (r *Reticulum) startLocalInterface() error {
 		si := &Interface{
 			Name:                fmt.Sprintf("LocalInterface[%s]", siName),
 			Type:                "LocalInterface",
+			IN:                  true,
 			OUT:                 true,
 			DriverImplemented:   true,
 			Online:              true,
@@ -1134,6 +1136,10 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 		if v, ok := parseInt(getFirst(kv, "configured_bitrate", "bitrate")); ok && v >= MINIMUM_BITRATE {
 			bitrate = &v
 		}
+		// Python sets interface_config["configured_bitrate"] for all interface drivers.
+		if bitrate != nil && strings.TrimSpace(getFirst(kv, "configured_bitrate")) == "" {
+			kv["configured_bitrate"] = strconv.Itoa(*bitrate)
+		}
 
 		// Python parity: announce_cap is specified as percent (0 < v <= 100) and stored as fraction.
 		var announceCap *float64
@@ -1161,16 +1167,24 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 		}
 
 		var announceRateTarget *int
-		if v, ok := parseInt(getFirst(kv, "announce_rate_target")); ok {
+		if v, ok := parseInt(getFirst(kv, "announce_rate_target")); ok && v > 0 {
 			announceRateTarget = &v
 		}
 		var announceRateGrace *int
-		if v, ok := parseInt(getFirst(kv, "announce_rate_grace")); ok {
+		if v, ok := parseInt(getFirst(kv, "announce_rate_grace")); ok && v >= 0 {
 			announceRateGrace = &v
 		}
 		var announceRatePenalty *int
-		if v, ok := parseInt(getFirst(kv, "announce_rate_penalty")); ok {
+		if v, ok := parseInt(getFirst(kv, "announce_rate_penalty")); ok && v >= 0 {
 			announceRatePenalty = &v
+		}
+		if announceRateTarget != nil && announceRateGrace == nil {
+			zero := 0
+			announceRateGrace = &zero
+		}
+		if announceRateTarget != nil && announceRatePenalty == nil {
+			zero := 0
+			announceRatePenalty = &zero
 		}
 
 		ingressControl := parseTruthy(getFirst(kv, "ingress_control"), true)
@@ -1462,6 +1476,19 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 				maxReconnect = &v
 			}
 
+			ifacSz := 0
+			if ifacSize != nil {
+				ifacSz = *ifacSize
+			}
+			ifacNetnameVal := ""
+			if ifacNetname != nil {
+				ifacNetnameVal = *ifacNetname
+			}
+			ifacNetkeyVal := ""
+			if ifacNetkey != nil {
+				ifacNetkeyVal = *ifacNetkey
+			}
+
 			tcpIf, err := ifaces.NewTCPClientInterfaceFromConfig(ifaces.TCPClientConfig{
 				Name:            strings.TrimSpace(name),
 				TargetHost:      host,
@@ -1472,9 +1499,9 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 				ConnectTimeout:  time.Duration(connectTimeoutS * float64(time.Second)),
 				ReconnectWait:   time.Duration(reconnectWaitS * float64(time.Second)),
 				MaxReconnectTry: maxReconnect,
-				IFACSize:        ifc.IFACSize,
-				IFACNetname:     ifc.IFACNetnameVal,
-				IFACNetkey:      ifc.IFACNetkeyVal,
+				IFACSize:        ifacSz,
+				IFACNetname:     ifacNetnameVal,
+				IFACNetkey:      ifacNetkeyVal,
 			})
 			if err != nil {
 				return fmt.Errorf("Interface %q TCP client config error: %w", name, err)
@@ -1492,6 +1519,19 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 			i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
 			fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
 
+			ifacSz := 0
+			if ifacSize != nil {
+				ifacSz = *ifacSize
+			}
+			ifacNetnameVal := ""
+			if ifacNetname != nil {
+				ifacNetnameVal = *ifacNetname
+			}
+			ifacNetkeyVal := ""
+			if ifacNetkey != nil {
+				ifacNetkeyVal = *ifacNetkey
+			}
+
 			logger := tcpLogAdapter{}
 			server, err := ifaces.NewTCPServerFromConfig(nil, logger, ifaces.TCPServerConfig{
 				Name:        strings.TrimSpace(name),
@@ -1502,9 +1542,9 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 				KISSFraming: kiss,
 				I2PTunneled: i2p,
 				FixedMTU:    fixedMTU,
-				IFACSize:    ifc.IFACSize,
-				IFACNetname: ifc.IFACNetnameVal,
-				IFACNetkey:  ifc.IFACNetkeyVal,
+				IFACSize:    ifacSz,
+				IFACNetname: ifacNetnameVal,
+				IFACNetkey:  ifacNetkeyVal,
 			})
 			if err != nil {
 				return fmt.Errorf("Interface %q TCP server config error: %w", name, err)
@@ -1603,6 +1643,10 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 	if v, ok := parseInt(getFirst(kv, "configured_bitrate", "bitrate")); ok && v >= MINIMUM_BITRATE {
 		bitrate = &v
 	}
+	// Python sets interface_config["configured_bitrate"] for all interface drivers.
+	if bitrate != nil && strings.TrimSpace(getFirst(kv, "configured_bitrate")) == "" {
+		kv["configured_bitrate"] = strconv.Itoa(*bitrate)
+	}
 
 	var announceCap *float64
 	if v, ok := parseFloat(getFirst(kv, "announce_cap")); ok && v > 0 && v <= 100 {
@@ -1629,16 +1673,24 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 	}
 
 	var announceRateTarget *int
-	if v, ok := parseInt(getFirst(kv, "announce_rate_target")); ok {
+	if v, ok := parseInt(getFirst(kv, "announce_rate_target")); ok && v > 0 {
 		announceRateTarget = &v
 	}
 	var announceRateGrace *int
-	if v, ok := parseInt(getFirst(kv, "announce_rate_grace")); ok {
+	if v, ok := parseInt(getFirst(kv, "announce_rate_grace")); ok && v >= 0 {
 		announceRateGrace = &v
 	}
 	var announceRatePenalty *int
-	if v, ok := parseInt(getFirst(kv, "announce_rate_penalty")); ok {
+	if v, ok := parseInt(getFirst(kv, "announce_rate_penalty")); ok && v >= 0 {
 		announceRatePenalty = &v
+	}
+	if announceRateTarget != nil && announceRateGrace == nil {
+		zero := 0
+		announceRateGrace = &zero
+	}
+	if announceRateTarget != nil && announceRatePenalty == nil {
+		zero := 0
+		announceRatePenalty = &zero
 	}
 
 	ingressControl := parseTruthy(getFirst(kv, "ingress_control"), true)
@@ -1917,6 +1969,19 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 			maxReconnect = &v
 		}
 
+		ifacSz := 0
+		if ifacSize != nil {
+			ifacSz = *ifacSize
+		}
+		ifacNetnameVal := ""
+		if ifacNetname != nil {
+			ifacNetnameVal = *ifacNetname
+		}
+		ifacNetkeyVal := ""
+		if ifacNetkey != nil {
+			ifacNetkeyVal = *ifacNetkey
+		}
+
 		tcpIf, err := ifaces.NewTCPClientInterfaceFromConfig(ifaces.TCPClientConfig{
 			Name:            strings.TrimSpace(name),
 			TargetHost:      host,
@@ -1927,9 +1992,9 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 			ConnectTimeout:  time.Duration(connectTimeoutS * float64(time.Second)),
 			ReconnectWait:   time.Duration(reconnectWaitS * float64(time.Second)),
 			MaxReconnectTry: maxReconnect,
-			IFACSize:        ifc.IFACSize,
-			IFACNetname:     ifc.IFACNetnameVal,
-			IFACNetkey:      ifc.IFACNetkeyVal,
+			IFACSize:        ifacSz,
+			IFACNetname:     ifacNetnameVal,
+			IFACNetkey:      ifacNetkeyVal,
 		})
 		if err != nil {
 			return false, fmt.Errorf("Interface %q TCP client config error: %w", name, err)
@@ -1947,6 +2012,19 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 		i2p := parseTruthy(getFirst(kv, "i2p_tunneled"), false)
 		fixedMTU, _ := parseInt(getFirst(kv, "fixed_mtu", "mtu"))
 
+		ifacSz := 0
+		if ifacSize != nil {
+			ifacSz = *ifacSize
+		}
+		ifacNetnameVal := ""
+		if ifacNetname != nil {
+			ifacNetnameVal = *ifacNetname
+		}
+		ifacNetkeyVal := ""
+		if ifacNetkey != nil {
+			ifacNetkeyVal = *ifacNetkey
+		}
+
 		logger := tcpLogAdapter{}
 		server, err := ifaces.NewTCPServerFromConfig(nil, logger, ifaces.TCPServerConfig{
 			Name:        strings.TrimSpace(name),
@@ -1957,9 +2035,9 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 			KISSFraming: kiss,
 			I2PTunneled: i2p,
 			FixedMTU:    fixedMTU,
-			IFACSize:    ifc.IFACSize,
-			IFACNetname: ifc.IFACNetnameVal,
-			IFACNetkey:  ifc.IFACNetkeyVal,
+			IFACSize:    ifacSz,
+			IFACNetname: ifacNetnameVal,
+			IFACNetkey:  ifacNetkeyVal,
 		})
 		if err != nil {
 			return false, fmt.Errorf("Interface %q TCP server config error: %w", name, err)
