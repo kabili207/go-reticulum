@@ -229,7 +229,7 @@ func main() {
 			rns.Log("The contained exception was: "+err.Error(), rns.LogError)
 			os.Exit(4)
 		}
-		rns.Log(fmt.Sprintf("New identity %s written to %s", id.String(), generatePath), rns.LogInfo)
+		rns.Log(fmt.Sprintf("New identity %s written to %s", id.String(), generatePath), rns.LogNotice)
 		return
 	}
 
@@ -318,15 +318,15 @@ func importIdentity(data string, useB32, useB64 bool, writePath *string, force, 
 		os.Exit(42)
 	}
 
-	rns.Log("Identity imported", rns.LogInfo)
+	rns.Log("Identity imported", rns.LogNotice)
 	pub := id.GetPublicKey()
 	switch {
 	case useB64:
-		rns.Log("Public Key  : "+encodeIdentityBase64(pub), rns.LogInfo)
+		rns.Log("Public Key  : "+encodeIdentityBase64(pub), rns.LogNotice)
 	case useB32:
-		rns.Log("Public Key  : "+base32.StdEncoding.EncodeToString(pub), rns.LogInfo)
+		rns.Log("Public Key  : "+base32.StdEncoding.EncodeToString(pub), rns.LogNotice)
 	default:
-		rns.Log("Public Key  : "+rns.HexRep(pub, false), rns.LogInfo)
+		rns.Log("Public Key  : "+rns.HexRep(pub, false), rns.LogNotice)
 	}
 
 	if len(id.GetPrivateKey()) > 0 {
@@ -334,14 +334,14 @@ func importIdentity(data string, useB32, useB64 bool, writePath *string, force, 
 			prv := id.GetPrivateKey()
 			switch {
 			case useB64:
-				rns.Log("Private Key : "+encodeIdentityBase64(prv), rns.LogInfo)
+				rns.Log("Private Key : "+encodeIdentityBase64(prv), rns.LogNotice)
 			case useB32:
-				rns.Log("Private Key : "+base32.StdEncoding.EncodeToString(prv), rns.LogInfo)
+				rns.Log("Private Key : "+base32.StdEncoding.EncodeToString(prv), rns.LogNotice)
 			default:
-				rns.Log("Private Key : "+rns.HexRep(prv, false), rns.LogInfo)
+				rns.Log("Private Key : "+rns.HexRep(prv, false), rns.LogNotice)
 			}
 		} else {
-			rns.Log("Private Key : Hidden", rns.LogInfo)
+			rns.Log("Private Key : Hidden", rns.LogNotice)
 		}
 	}
 
@@ -352,7 +352,7 @@ func importIdentity(data string, useB32, useB64 bool, writePath *string, force, 
 				fmt.Println("Error while writing imported identity to file:", err)
 				os.Exit(44)
 			}
-			rns.Log("Wrote imported identity to "+*writePath, rns.LogInfo)
+			rns.Log("Wrote imported identity to "+*writePath, rns.LogNotice)
 		} else {
 			fmt.Println("File", wp, "already exists, not overwriting")
 			os.Exit(43)
@@ -366,11 +366,11 @@ func printIdentityKeys(id *rns.Identity, printPriv, useB32, useB64 bool) {
 	pub := id.GetPublicKey()
 	switch {
 	case useB64:
-		rns.Log("Public Key  : "+encodeIdentityBase64(pub), rns.LogInfo)
+		rns.Log("Public Key  : "+encodeIdentityBase64(pub), rns.LogNotice)
 	case useB32:
-		rns.Log("Public Key  : "+base32.StdEncoding.EncodeToString(pub), rns.LogInfo)
+		rns.Log("Public Key  : "+base32.StdEncoding.EncodeToString(pub), rns.LogNotice)
 	default:
-		rns.Log("Public Key  : "+rns.HexRep(pub, false), rns.LogInfo)
+		rns.Log("Public Key  : "+rns.HexRep(pub, false), rns.LogNotice)
 	}
 
 	if len(id.GetPrivateKey()) > 0 {
@@ -378,14 +378,14 @@ func printIdentityKeys(id *rns.Identity, printPriv, useB32, useB64 bool) {
 			prv := id.GetPrivateKey()
 			switch {
 			case useB64:
-				rns.Log("Private Key : "+encodeIdentityBase64(prv), rns.LogInfo)
+				rns.Log("Private Key : "+encodeIdentityBase64(prv), rns.LogNotice)
 			case useB32:
-				rns.Log("Private Key : "+base32.StdEncoding.EncodeToString(prv), rns.LogInfo)
+				rns.Log("Private Key : "+base32.StdEncoding.EncodeToString(prv), rns.LogNotice)
 			default:
-				rns.Log("Private Key : "+rns.HexRep(prv, false), rns.LogInfo)
+				rns.Log("Private Key : "+rns.HexRep(prv, false), rns.LogNotice)
 			}
 		} else {
-			rns.Log("Private Key : Hidden", rns.LogInfo)
+			rns.Log("Private Key : Hidden", rns.LogNotice)
 		}
 	}
 }
@@ -399,11 +399,11 @@ func exportIdentity(id *rns.Identity, useB32, useB64 bool) {
 	prv := id.GetPrivateKey()
 	switch {
 	case useB64:
-		rns.Log("Exported Identity : "+encodeIdentityBase64(prv), rns.LogInfo)
+		rns.Log("Exported Identity : "+encodeIdentityBase64(prv), rns.LogNotice)
 	case useB32:
-		rns.Log("Exported Identity : "+base32.StdEncoding.EncodeToString(prv), rns.LogInfo)
+		rns.Log("Exported Identity : "+base32.StdEncoding.EncodeToString(prv), rns.LogNotice)
 	default:
-		rns.Log("Exported Identity : "+rns.HexRep(prv, false), rns.LogInfo)
+		rns.Log("Exported Identity : "+rns.HexRep(prv, false), rns.LogNotice)
 	}
 	os.Exit(0)
 }

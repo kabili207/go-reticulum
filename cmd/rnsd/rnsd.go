@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"reflect"
@@ -23,6 +24,7 @@ var rnsdVersion = rns.GetVersion()
 type countFlag int
 
 func (c *countFlag) String() string { return fmt.Sprint(int(*c)) }
+func (c *countFlag) IsBoolFlag() bool { return true }
 func (c *countFlag) Set(string) error {
 	*c++
 	return nil
@@ -41,21 +43,64 @@ func main() {
 		interactive bool
 		exampleConf bool
 		showVersion bool
+		showHelp    bool
 	)
 
-	flag.StringVar(&configDir, "config", "", "path to alternative Reticulum config directory")
-	flag.Var(&verboseCnt, "verbose", "increase verbosity")
-	flag.Var(&verboseCnt, "v", "increase verbosity")
-	flag.Var(&quietCnt, "quiet", "decrease verbosity")
-	flag.Var(&quietCnt, "q", "decrease verbosity")
-	flag.BoolVar(&asService, "service", false, "rnsd is running as a service and should log to file")
-	flag.BoolVar(&asService, "s", false, "rnsd is running as a service and should log to file")
-	flag.BoolVar(&interactive, "interactive", false, "drop into interactive shell after initialisation")
-	flag.BoolVar(&interactive, "i", false, "drop into interactive shell after initialisation")
-	flag.BoolVar(&exampleConf, "exampleconfig", false, "print verbose configuration example to stdout and exit")
-	flag.BoolVar(&showVersion, "version", false, "show version and exit")
+	// Use a local FlagSet to avoid pulling in global flags from dependencies
+	// (eg `testing/quick` via Yaegi, which otherwise exposes `-quickchecks`).
+	fs := flag.NewFlagSet("rnsd", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 
-	flag.CommandLine.Parse(expandCountFlags(os.Args[1:]))
+	fs.StringVar(&configDir, "config", "", "path to alternative Reticulum config directory")
+	fs.Var(&verboseCnt, "verbose", "increase verbosity")
+	fs.Var(&verboseCnt, "v", "increase verbosity")
+	fs.Var(&quietCnt, "quiet", "decrease verbosity")
+	fs.Var(&quietCnt, "q", "decrease verbosity")
+	fs.BoolVar(&asService, "service", false, "rnsd is running as a service and should log to file")
+	fs.BoolVar(&asService, "s", false, "rnsd is running as a service and should log to file")
+	fs.BoolVar(&interactive, "interactive", false, "drop into interactive shell after initialisation")
+	fs.BoolVar(&interactive, "i", false, "drop into interactive shell after initialisation")
+	fs.BoolVar(&exampleConf, "exampleconfig", false, "print verbose configuration example to stdout and exit")
+	fs.BoolVar(&showVersion, "version", false, "show version and exit")
+	fs.BoolVar(&showHelp, "help", false, "show this help message and exit")
+	fs.BoolVar(&showHelp, "h", false, "show this help message and exit")
+
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Reticulum Network Stack Daemon")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "options:")
+		fs.SetOutput(os.Stderr)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(expandCountFlags(os.Args[1:])); err != nil {
+		fs.Usage()
+		msg := strings.TrimSpace(err.Error())
+		if msg != "" {
+			if strings.HasPrefix(msg, "flag provided but not defined") {
+				parts := strings.SplitN(msg, ":", 2)
+				unk := msg
+				if len(parts) == 2 {
+					unk = strings.TrimSpace(parts[1])
+				}
+				fmt.Fprintf(os.Stderr, "rnsd: error: unrecognized arguments: %s\n", unk)
+			} else {
+				fmt.Fprintf(os.Stderr, "rnsd: error: %s\n", msg)
+			}
+		}
+		os.Exit(2)
+	}
+
+	if showHelp {
+		fs.Usage()
+		return
+	}
+
+	if fs.NArg() > 0 {
+		fs.Usage()
+		fmt.Fprintf(os.Stderr, "rnsd: error: unrecognized arguments: %s\n", strings.Join(fs.Args(), " "))
+		os.Exit(2)
+	}
 
 	if showVersion {
 		fmt.Printf("rnsd %s\n", rnsdVersion)
@@ -63,7 +108,8 @@ func main() {
 	}
 
 	if exampleConf {
-		fmt.Print(exampleRNSConfig)
+		// Python prints the string via print(), which always appends a newline.
+		fmt.Println(exampleRNSConfig)
 		return
 	}
 
@@ -144,18 +190,9 @@ func programSetup(configdir *string, verbosity, quietness int, service, interact
 		return nil
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	for {
-		select {
-		case s := <-sig:
-			if s == syscall.SIGINT {
-				fmt.Println()
-			}
-			return nil
-		case <-time.After(time.Second):
-			// Match Python behaviour: `while True: time.sleep(1)`.
-		}
+		// Match Python behaviour: `while True: time.sleep(1)`.
+		time.Sleep(time.Second)
 	}
 }
 

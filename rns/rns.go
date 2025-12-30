@@ -22,7 +22,7 @@ import (
 )
 
 // Library version (set manually or generate at build time).
-var Version = "1.0.4"
+var Version = "1.0.5"
 var compiledFlag = true
 
 const (

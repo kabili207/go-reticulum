@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -980,14 +981,8 @@ func (d *Destination) removeLink(target *Link) {
 
 // ---- small utilities ----
 
-// In real code, replace with strings.Contains(appName, ".").
 func containsDot(s string) bool {
-	for _, r := range s {
-		if r == '.' {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(s, ".")
 }
 
 func containsInt(v int, arr []int) bool {
@@ -1001,15 +996,7 @@ func containsInt(v int, arr []int) bool {
 
 // Simple alternative to full_name.split(".").
 func splitDot(s string) []string {
-	out := []string{""}
-	for _, r := range s {
-		if r == '.' {
-			out = append(out, "")
-		} else {
-			out[len(out)-1] += string(r)
-		}
-	}
-	return out
+	return strings.Split(s, ".")
 }
 
 // Stub for GROUP Token.

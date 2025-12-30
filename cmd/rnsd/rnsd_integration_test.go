@@ -111,7 +111,7 @@ func TestRNSDIntegration_ExampleConfig(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d\n%s", code, out)
 	}
-	if out != exampleRNSConfig {
+	if out != exampleRNSConfig+"\n" {
 		t.Fatalf("unexpected example config output")
 	}
 }

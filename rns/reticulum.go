@@ -1078,10 +1078,6 @@ func (r *Reticulum) startLocalInterface() error {
 	r.IsStandaloneInstance = true
 	r.IsConnectedToSharedInstance = false
 	r.startJobs()
-
-	if r.RequireShared {
-		return errors.New("no shared instance available, but application required it")
-	}
 	return nil
 }
 
@@ -2692,8 +2688,9 @@ func (r *Reticulum) cleanCaches() {
 
 // ---------------- RPC loop + public methods ----------------
 
-// Implement RPCListener / RPCConn and call/response serialization as needed
-// (JSON, gob, msgpack, ...).
+// Local RPC uses a small auth handshake plus Go `encoding/gob` for call/response
+// serialization. The `RPCListener`/`RPCConn` interfaces are kept so we can swap
+// the wire format if needed, but the current implementation targets Go↔Go.
 
 func (r *Reticulum) rpcLoop() {
 	if r == nil || r.rpcLn == nil {

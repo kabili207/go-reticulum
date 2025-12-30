@@ -52,6 +52,7 @@ func (c *countFlag) Set(string) error {
 	*c++
 	return nil
 }
+func (c *countFlag) IsBoolFlag() bool { return true }
 
 func main() {
 	var (

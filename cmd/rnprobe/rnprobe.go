@@ -28,7 +28,8 @@ func (c *countFlag) Set(string) error {
 	*c++
 	return nil
 }
-func (c *countFlag) Value() int { return int(*c) }
+func (c *countFlag) Value() int       { return int(*c) }
+func (c *countFlag) IsBoolFlag() bool { return true }
 
 type lossError struct{ loss float64 }
 
@@ -56,6 +57,7 @@ func main() {
 		wait      float64
 		verbose   countFlag
 		showVer   bool
+		help      bool
 	)
 
 	flag.StringVar(&configDir, "config", "", "path to alternative Reticulum config directory")
@@ -70,6 +72,8 @@ func main() {
 	flag.Var(&verbose, "verbose", "increase verbosity")
 	flag.Var(&verbose, "v", "increase verbosity")
 	flag.BoolVar(&showVer, "version", false, "print program version and exit")
+	flag.BoolVar(&help, "h", false, "show this help message and exit")
+	flag.BoolVar(&help, "help", false, "show this help message and exit")
 
 	flag.Usage = func() {
 		fmt.Println("Reticulum Probe Utility")
@@ -81,6 +85,13 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if help {
+		fmt.Println()
+		flag.Usage()
+		fmt.Println()
+		return
+	}
 
 	if showVer {
 		fmt.Printf("%s %s\n", programName, rns.GetVersion())

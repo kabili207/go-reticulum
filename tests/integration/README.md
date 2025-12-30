@@ -11,3 +11,18 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
   - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnstatus/`.
   - Env:
     - `SHARED_INSTANCE_TYPE=unix` — forces `shared_instance_type` in test configs (useful in environments where loopback TCP is not permitted).
+- `tests/integration/compare_rnsd_py_vs_go.sh` — compares `rnsd` flag behaviour (Python vs Go) and validates shared-instance/rpc_key basics via `rnstatus`.
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnsd/`.
+- `tests/integration/compare_rnid_py_vs_go.sh` — compares `rnid` identity/crypto workflows (Python vs Go) without network by cross-validating identity load, export/import, sign/validate, and encrypt/decrypt.
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnid/`.
+- `tests/integration/compare_rnpath_py_vs_go.sh` — compares `rnpath` CLI behaviour (Python vs Go) for `-t/-m/-r/-d/-x/-D/-j`, including exit codes and output (with Reticulum log lines stripped for stable diffs).
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnpath/`.
+- `tests/integration/compare_rnprobe_py_vs_go.sh` — compares `rnprobe` CLI behaviour (Python vs Go) for argument validation and `-t/-v/--version` with stable output normalization (spinner/control chars removed).
+  - Requires: `python3`, Go toolchain.
+  - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnprobe/`.
+- `tests/integration/compare_rnprobe_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, extracts the probe responder hash from `rnstatus`, and verifies `rnprobe rnstransport.probe <hash>` succeeds with 0% loss (summary parity).
+  - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
+  - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rnprobe_two_nodes/`.
