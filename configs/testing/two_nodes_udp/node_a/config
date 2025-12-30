@@ -1,0 +1,21 @@
+[reticulum]
+  share_instance = Yes
+  instance_name = node_a
+  shared_instance_type = tcp
+  shared_instance_port = 37430
+  instance_control_port = 37431
+  enable_transport = Yes
+  respond_to_probes = Yes
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  [[UDP A]]
+    type = UDPInterface
+    enabled = yes
+    listen_ip = 127.0.0.1
+    listen_port = 50000
+    forward_ip = 127.0.0.1
+    forward_port = 50001
+

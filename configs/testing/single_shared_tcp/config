@@ -1,0 +1,22 @@
+[reticulum]
+  share_instance = Yes
+  instance_name = single
+  shared_instance_type = tcp
+  shared_instance_port = 37428
+  instance_control_port = 37429
+  enable_transport = No
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  # Стартуемся без “физических” интерфейсов. Это удобно для тестов утилит,
+  # которым важен только shared instance (LocalInterface IPC).
+  [[Noop]]
+    type = UDPInterface
+    enabled = no
+    listen_ip = 127.0.0.1
+    listen_port = 0
+    forward_ip = 127.0.0.1
+    forward_port = 0
+

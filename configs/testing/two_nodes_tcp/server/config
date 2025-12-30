@@ -1,0 +1,18 @@
+[reticulum]
+  share_instance = Yes
+  instance_name = tcp_server
+  shared_instance_type = tcp
+  shared_instance_port = 37434
+  instance_control_port = 37435
+  enable_transport = Yes
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  [[TCP Server]]
+    type = TCPServerInterface
+    enabled = yes
+    listen_ip = 127.0.0.1
+    listen_port = 51000
+

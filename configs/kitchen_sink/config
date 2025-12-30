@@ -1,0 +1,152 @@
+# Kitchen-sink Reticulum config (Go port).
+# Цель: собрать в одном месте все важные ключи и интерфейсы, чтобы было что
+# копировать/включать для тестов. Большинство интерфейсов выключены по умолчанию.
+
+[reticulum]
+  # transport влияет на rnpath/rnprobe/announce routing
+  enable_transport = No
+
+  # shared instance (для rnstatus/rnpath/rnprobe/rnx/rncp и т.д.)
+  share_instance = Yes
+  instance_name = default
+
+  # Для docker/CI удобнее tcp, для локального использования unix обычно ок.
+  # shared_instance_type = tcp
+  # shared_instance_port = 37428
+  # instance_control_port = 37429
+
+  # Для систем без общего каталога конфигурации (например Android).
+  # rpc_key = e5c032d3ec4e64a6aca9927ba8ab73336780f6d71790
+
+  # Remote management (rnstatus/rnpath с -R/-i в Python; у нас — аналогично по смыслу).
+  # enable_remote_management = yes
+  # remote_management_allowed = <identity_hash1>, <identity_hash2>
+
+  # Прочие флаги, которые встречаются в Python и/или в нашем порте.
+  # panic_on_interface_error = No
+  # respond_to_probes = No
+  # use_implicit_proof = No
+  # link_mtu_discovery = No
+  # mtu = 500
+
+[logging]
+  # 0..7
+  loglevel = 4
+
+[interfaces]
+  # --- “без железа”, удобно для тестов ---
+
+  [[UDP Loopback Example]]
+    type = UDPInterface
+    enabled = no
+    listen_ip = 127.0.0.1
+    listen_port = 50000
+    forward_ip = 127.0.0.1
+    forward_port = 50001
+    # announce_cap = 50
+    # ifac_size = 128
+    # network_name = testnet
+    # passphrase = testpass
+
+  [[TCP Server Example]]
+    type = TCPServerInterface
+    enabled = no
+    listen_ip = 127.0.0.1
+    listen_port = 51000
+
+  [[TCP Client Example]]
+    type = TCPClientInterface
+    enabled = no
+    target_host = 127.0.0.1
+    target_port = 51000
+    # connect_timeout = 2
+    # reconnect_wait = 2
+    # max_reconnect_tries = 0
+
+  [[AutoInterface Example]]
+    type = AutoInterface
+    enabled = no
+    # selected_interface_mode = 1
+    # configured_bitrate = None
+
+  # --- Linux-only / environment-specific ---
+
+  [[Backbone Example]]
+    type = BackboneInterface
+    enabled = no
+    target_host = 127.0.0.1
+    target_port = 4242
+
+  [[I2P Example]]
+    type = I2PInterface
+    enabled = no
+    connectable = yes
+    peers = example.b32.i2p
+
+  # --- Pipe interface (запускает подпроцесс; требует command=...) ---
+  [[Pipe Example]]
+    type = PipeInterface
+    enabled = no
+    command = "cat"
+    # respawn_delay = 5
+
+  # --- Железо/серийка ---
+
+  [[RNode Example]]
+    type = RNodeInterface
+    enabled = no
+    port = /dev/ttyUSB0
+    frequency = 867200000
+    bandwidth = 125000
+    txpower = 7
+    spreadingfactor = 8
+    codingrate = 5
+    flow_control = false
+
+  [[RNode Multi Example]]
+    type = RNodeMultiInterface
+    enabled = no
+    # Вложенные подсекции — список RNode в одной “мульти” обёртке.
+    # [[[rnode0]]]
+    #   port = /dev/ttyUSB0
+    # [[[rnode1]]]
+    #   port = /dev/ttyUSB1
+
+  [[KISS Example]]
+    type = KISSInterface
+    enabled = no
+    port = /dev/ttyUSB1
+    speed = 115200
+    databits = 8
+    parity = none
+    stopbits = 1
+    preamble = 150
+    txtail = 10
+    persistence = 200
+    slottime = 20
+    flow_control = false
+
+  [[AX.25 KISS Example]]
+    type = AX25KISSInterface
+    enabled = no
+    callsign = NO1CLL
+    ssid = 0
+    port = /dev/ttyUSB2
+    speed = 115200
+    databits = 8
+    parity = none
+    stopbits = 1
+    flow_control = false
+
+  [[Serial Example]]
+    type = SerialInterface
+    enabled = no
+    port = /dev/ttyUSB3
+    speed = 115200
+
+  [[Weave Example]]
+    type = WeaveInterface
+    enabled = no
+    port = /dev/ttyUSB4
+    # configured_bitrate = 250000
+

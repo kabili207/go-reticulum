@@ -1,0 +1,21 @@
+[reticulum]
+  share_instance = Yes
+  instance_name = tcp_client
+  shared_instance_type = tcp
+  shared_instance_port = 37436
+  instance_control_port = 37437
+  enable_transport = Yes
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  [[TCP Client]]
+    type = TCPClientInterface
+    enabled = yes
+    target_host = 127.0.0.1
+    target_port = 51000
+    connect_timeout = 1
+    reconnect_wait = 1
+    max_reconnect_tries = 0
+
