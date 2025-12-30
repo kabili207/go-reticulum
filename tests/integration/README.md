@@ -6,6 +6,7 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
 
 ## Extra regression helpers
 
+- `tests/run_all_parity.sh` — runs Go tests, Python tests, then all parity scripts under `tests/integration/` in a stable sequential order.
 - `tests/integration/compare_rnstatus_py_vs_go.sh` — runs `rnsd` (Python and Go) for each template config under `configs/testing/**/config`, fetches `rnstatus -j -a`, normalizes output and diffs it, plus compares text-mode output across a small flag matrix.
   - Requires: `python3`, Go toolchain.
   - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnstatus/`.

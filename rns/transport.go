@@ -1738,6 +1738,22 @@ func pathRequestHandler(data []byte, packet *Packet) {
 		attached = packet.ReceivingInterface
 	}
 
+	// Python parity: If the destination exists on a local client, but it has not been
+	// announced yet, the shared instance should still forward PATH_REQUEST packets to
+	// local clients so they can answer with a PATH_RESPONSE.
+	if attached != nil && len(LocalClientInterfaces) > 0 && !IsLocalClientInterface(attached) {
+		if key, ok := makeHashKey(destinationHash); ok {
+			pendingLocalPathRequestsMu.Lock()
+			if _, exists := pendingLocalPathRequests[key]; !exists {
+				pendingLocalPathRequests[key] = attached
+			}
+			pendingLocalPathRequestsMu.Unlock()
+		}
+		if packet != nil && len(packet.Raw) > 0 {
+			forwardPathRequestToLocalClients(packet.Raw)
+		}
+	}
+
 	if answerPathRequest(destinationHash, attached, requestingTransportID, tagBytes) {
 		return
 	}
@@ -1752,6 +1768,19 @@ func pathRequestHandler(data []byte, packet *Packet) {
 			continue
 		}
 		requestPathOnInterface(destinationHash, ifc, tagBytes, true)
+	}
+}
+
+func forwardPathRequestToLocalClients(raw []byte) {
+	if len(raw) == 0 || len(LocalClientInterfaces) == 0 {
+		return
+	}
+	send := append([]byte(nil), raw...)
+	for _, cif := range LocalClientInterfaces {
+		if cif == nil {
+			continue
+		}
+		Transmit(cif, send)
 	}
 }
 

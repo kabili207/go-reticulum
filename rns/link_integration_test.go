@@ -10,10 +10,10 @@ import (
 )
 
 type integrationTransport struct {
-	mu            sync.Mutex
-	pendingByLink map[string][][]byte
-	sentByContext map[byte]int
-	deliveredByContext map[byte]int
+	mu                            sync.Mutex
+	pendingByLink                 map[string][][]byte
+	sentByContext                 map[byte]int
+	deliveredByContext            map[byte]int
 	deliveredByContextToInitiator map[byte]int
 	deliveredByContextToResponder map[byte]int
 }
@@ -24,11 +24,13 @@ type integrationTransportProvider interface {
 
 func (it *integrationTransport) baseTransport() *integrationTransport { return it }
 
-func (integrationTransport) GetFirstHopTimeout(dstHash []byte) time.Duration { return 10 * time.Millisecond }
-func (integrationTransport) HopsTo(dstHash []byte) int                        { return 1 }
-func (integrationTransport) GetPacketRSSI(hash []byte) *float64              { return nil }
-func (integrationTransport) GetPacketSNR(hash []byte) *float64               { return nil }
-func (integrationTransport) GetPacketQ(hash []byte) *float64                 { return nil }
+func (integrationTransport) GetFirstHopTimeout(dstHash []byte) time.Duration {
+	return 10 * time.Millisecond
+}
+func (integrationTransport) HopsTo(dstHash []byte) int          { return 1 }
+func (integrationTransport) GetPacketRSSI(hash []byte) *float64 { return nil }
+func (integrationTransport) GetPacketSNR(hash []byte) *float64  { return nil }
+func (integrationTransport) GetPacketQ(hash []byte) *float64    { return nil }
 
 type integrationTransportDelayed struct {
 	base    *integrationTransport
@@ -47,7 +49,9 @@ func (it *integrationTransportDelayed) GetPacketRSSI(hash []byte) *float64 {
 func (it *integrationTransportDelayed) GetPacketSNR(hash []byte) *float64 {
 	return it.base.GetPacketSNR(hash)
 }
-func (it *integrationTransportDelayed) GetPacketQ(hash []byte) *float64 { return it.base.GetPacketQ(hash) }
+func (it *integrationTransportDelayed) GetPacketQ(hash []byte) *float64 {
+	return it.base.GetPacketQ(hash)
+}
 
 func (it *integrationTransportDelayed) Outbound(p *Packet) bool {
 	// Simulate a slow local interface by adding serialization delay based on frame size.
@@ -60,7 +64,7 @@ func (it *integrationTransportDelayed) Outbound(p *Packet) bool {
 			rawLen = len(p.Data)
 		}
 		// bits / bps = seconds
-		delay := time.Duration((float64(rawLen)*8.0/float64(it.bitrate))*float64(time.Second)) //nolint:durationcheck
+		delay := time.Duration((float64(rawLen) * 8.0 / float64(it.bitrate)) * float64(time.Second)) //nolint:durationcheck
 		if delay > 0 {
 			time.Sleep(delay)
 		}
@@ -97,26 +101,26 @@ func (it *integrationTransport) Outbound(p *Packet) bool {
 	}
 
 	var deliver func(pkt *Packet) bool
-		deliver = func(pkt *Packet) bool {
-			// If this packet is associated with a link, we can deterministically route
-			// it to the peer link (initiator <-> responder) in this in-process harness.
-				if p.Link != nil && len(p.Link.LinkID) > 0 && bytesEqual(pkt.DestinationHash, p.Link.LinkID) {
-					if p.Link.Initiator {
-						if responder := findResponderLinkByIDTest(p.Link.LinkID); responder != nil {
-							pkt.Link = responder
-							pkt.Destination = responder.destination
-						}
-					} else {
-						if initiator := findInitiatorLinkByIDTest(p.Link.LinkID); initiator != nil {
-							pkt.Link = initiator
-							pkt.Destination = initiator.destination
-						}
-					}
+	deliver = func(pkt *Packet) bool {
+		// If this packet is associated with a link, we can deterministically route
+		// it to the peer link (initiator <-> responder) in this in-process harness.
+		if p.Link != nil && len(p.Link.LinkID) > 0 && bytesEqual(pkt.DestinationHash, p.Link.LinkID) {
+			if p.Link.Initiator {
+				if responder := findResponderLinkByIDTest(p.Link.LinkID); responder != nil {
+					pkt.Link = responder
+					pkt.Destination = responder.destination
 				}
+			} else {
+				if initiator := findInitiatorLinkByIDTest(p.Link.LinkID); initiator != nil {
+					pkt.Link = initiator
+					pkt.Destination = initiator.destination
+				}
+			}
+		}
 
-			// If the harness already resolved the link, don't override it with generic lookup
-			// (since both initiator and responder share the same link ID).
-			if pkt.Link == nil {
+		// If the harness already resolved the link, don't override it with generic lookup
+		// (since both initiator and responder share the same link ID).
+		if pkt.Link == nil {
 			// Resolve destination/link for the inbound copy.
 			if pkt.DestinationType == byte(DestinationLINK) || pkt.Context == PacketCtxLRProof {
 				// Find link by link ID (destination hash is link_id for link packets / lrproof).
@@ -130,83 +134,83 @@ func (it *integrationTransport) Outbound(p *Packet) bool {
 					pkt.Link = l
 					pkt.Destination = l.destination
 				} else if pkt.Context == PacketCtxLRProof {
-				// Outgoing link might not be registered yet; stash and retry later.
-				rawCopy := append([]byte(nil), pkt.Raw...)
-				it.mu.Lock()
-				if it.pendingByLink == nil {
-					it.pendingByLink = make(map[string][][]byte)
-				}
-				key := string(pkt.DestinationHash)
-				it.pendingByLink[key] = append(it.pendingByLink[key], rawCopy)
-				it.mu.Unlock()
-				destHash := append([]byte(nil), pkt.DestinationHash...)
-				go func() {
-					deadline := time.Now().Add(200 * time.Millisecond)
-					for time.Now().Before(deadline) {
-						if findInitiatorLinkByIDTest(destHash) != nil {
-							retry := NewPacket(nil, rawCopy)
-							if retry == nil || !retry.Unpack() {
+					// Outgoing link might not be registered yet; stash and retry later.
+					rawCopy := append([]byte(nil), pkt.Raw...)
+					it.mu.Lock()
+					if it.pendingByLink == nil {
+						it.pendingByLink = make(map[string][][]byte)
+					}
+					key := string(pkt.DestinationHash)
+					it.pendingByLink[key] = append(it.pendingByLink[key], rawCopy)
+					it.mu.Unlock()
+					destHash := append([]byte(nil), pkt.DestinationHash...)
+					go func() {
+						deadline := time.Now().Add(200 * time.Millisecond)
+						for time.Now().Before(deadline) {
+							if findInitiatorLinkByIDTest(destHash) != nil {
+								retry := NewPacket(nil, rawCopy)
+								if retry == nil || !retry.Unpack() {
+									return
+								}
+								_ = deliver(retry)
 								return
 							}
-							_ = deliver(retry)
-							return
+							time.Sleep(2 * time.Millisecond)
 						}
-						time.Sleep(2 * time.Millisecond)
-					}
-				}()
+					}()
 					return true
 				}
 			} else {
 				pkt.Destination = findDestinationByHash(pkt.DestinationHash)
 			}
-			}
+		}
 
-			// Proofs are handled by transport receipt logic first.
-			if pkt.PacketType == PacketTypeProof {
-				// Link proofs are always destined for the initiator (the sender that
-				// created the receipt), so route them deterministically to avoid
-				// relying on link list ordering.
-				if pkt.DestinationType == byte(DestinationLINK) && pkt.Context == PacketCtxNone {
-					if initiator := findInitiatorLinkByIDTest(pkt.DestinationHash); initiator != nil {
-						pkt.Link = initiator
-						pkt.Destination = initiator.destination
-					}
+		// Proofs are handled by transport receipt logic first.
+		if pkt.PacketType == PacketTypeProof {
+			// Link proofs are always destined for the initiator (the sender that
+			// created the receipt), so route them deterministically to avoid
+			// relying on link list ordering.
+			if pkt.DestinationType == byte(DestinationLINK) && pkt.Context == PacketCtxNone {
+				if initiator := findInitiatorLinkByIDTest(pkt.DestinationHash); initiator != nil {
+					pkt.Link = initiator
+					pkt.Destination = initiator.destination
 				}
-				if handled := handleInboundProof(pkt); handled {
-					return true
+			}
+			if handled := handleInboundProof(pkt); handled {
+				return true
 			}
 		}
 
-			if pkt.Link != nil {
-				it.mu.Lock()
-				if it.deliveredByContext == nil {
-					it.deliveredByContext = make(map[byte]int)
-				}
-				it.deliveredByContext[pkt.Context]++
-				if pkt.Link.Initiator {
-					if it.deliveredByContextToInitiator == nil {
-						it.deliveredByContextToInitiator = make(map[byte]int)
-					}
-					it.deliveredByContextToInitiator[pkt.Context]++
-				} else {
-					if it.deliveredByContextToResponder == nil {
-						it.deliveredByContextToResponder = make(map[byte]int)
-					}
-					it.deliveredByContextToResponder[pkt.Context]++
-				}
-				it.mu.Unlock()
-				pkt.Link.Receive(pkt)
-				return true
+		if pkt.Link != nil {
+			it.mu.Lock()
+			if it.deliveredByContext == nil {
+				it.deliveredByContext = make(map[byte]int)
 			}
-			if pkt.Destination != nil {
-				it.mu.Lock()
-				if it.deliveredByContext == nil {
-					it.deliveredByContext = make(map[byte]int)
+			it.deliveredByContext[pkt.Context]++
+			if pkt.Link.Initiator {
+				if it.deliveredByContextToInitiator == nil {
+					it.deliveredByContextToInitiator = make(map[byte]int)
 				}
-				it.deliveredByContext[pkt.Context]++
-				it.mu.Unlock()
-				return pkt.Destination.Receive(pkt)
+				it.deliveredByContextToInitiator[pkt.Context]++
+			} else {
+				if it.deliveredByContextToResponder == nil {
+					it.deliveredByContextToResponder = make(map[byte]int)
+				}
+				it.deliveredByContextToResponder[pkt.Context]++
 			}
+			it.mu.Unlock()
+			pkt.Link.Receive(pkt)
+			return true
+		}
+		if pkt.Destination != nil {
+			it.mu.Lock()
+			if it.deliveredByContext == nil {
+				it.deliveredByContext = make(map[byte]int)
+			}
+			it.deliveredByContext[pkt.Context]++
+			it.mu.Unlock()
+			return pkt.Destination.Receive(pkt)
+		}
 		return false
 	}
 
@@ -379,7 +383,7 @@ func TestIntegration_LinkEstablish_DefaultMode(t *testing.T) {
 		}
 		_ = destIn
 
-			l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
 		if err != nil {
 			t.Fatalf("NewOutgoingLink: %v", err)
 		}
@@ -456,7 +460,7 @@ func TestIntegration_LinkEstablish_AES256CBC_Mode(t *testing.T) {
 	})
 }
 
-func TestIntegration_LinkEstablish_AES128CBC_ModeRejected(t *testing.T) {
+func TestIntegration_LinkEstablish_AES128CBC(t *testing.T) {
 	requireIntegration(t)
 	resetKnownDestinationsForTest()
 	withIntegrationTransport(t, func() {
@@ -477,9 +481,29 @@ func TestIntegration_LinkEstablish_AES128CBC_ModeRejected(t *testing.T) {
 			t.Fatalf("NewDestination(in): %v", err)
 		}
 
-		if _, err := NewOutgoingLink(destOut, LinkModeAES128CBC, nil, nil); err == nil {
-			t.Fatalf("expected AES128CBC mode to be rejected as disabled")
+		l, err := NewOutgoingLink(destOut, LinkModeAES128CBC, nil, nil)
+		if err != nil {
+			t.Fatalf("NewOutgoingLink: %v", err)
 		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if l.Status == LinkActive {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if l.Status != LinkActive {
+			t.Fatalf("expected link active, got status %d", l.Status)
+		}
+		if l.Mode != LinkModeAES128CBC {
+			t.Fatalf("expected mode AES128CBC, got %d", l.Mode)
+		}
+		if got := len(l.derivedKey); got != 32 {
+			t.Fatalf("expected derived key length 32, got %d", got)
+		}
+
+		l.Teardown()
 	})
 }
 
@@ -504,7 +528,7 @@ func TestIntegration_LinkPackets_WithReceipts(t *testing.T) {
 			t.Fatalf("NewDestination(in): %v", err)
 		}
 
-			l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
 		if err != nil {
 			t.Fatalf("NewOutgoingLink: %v", err)
 		}
@@ -589,7 +613,7 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 			t.Fatalf("NewDestination(in): %v", err)
 		}
 
-			l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
 		if err != nil {
 			t.Fatalf("NewOutgoingLink: %v", err)
 		}
@@ -671,12 +695,12 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 	})
 }
 
-	func TestIntegration_BufferRoundTrip_Big(t *testing.T) {
-		requireIntegration(t)
-		t.Skip("TODO: channel/buffer large transfer parity (currently flaky in in-process harness)")
-		if testing.Short() {
-			t.Skip("skipping big buffer test in -short")
-		}
+func TestIntegration_BufferRoundTrip_Big(t *testing.T) {
+	requireIntegration(t)
+	t.Skip("TODO: channel/buffer large transfer parity (currently flaky in in-process harness)")
+	if testing.Short() {
+		t.Skip("skipping big buffer test in -short")
+	}
 	resetKnownDestinationsForTest()
 	withIntegrationTransport(t, func() {
 		prvHex := "f8953ffaf607627e615603ff1530c82c434cf87c07179dd7689ea776f30b964cfb7ba6164af00c5111a45e69e57d885e1285f8dbfe3a21e95ae17cf676b0f8b7"
@@ -696,7 +720,7 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 			t.Fatalf("NewDestination(in): %v", err)
 		}
 
-			l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
+		l, err := NewOutgoingLink(destOut, LinkModeDefault, nil, nil)
 		if err != nil {
 			t.Fatalf("NewOutgoingLink: %v", err)
 		}
@@ -721,11 +745,11 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 		_, _ = rand.Read(msg)
 
 		// Build expected response: insert " back at you" every MAX_DATA_LEN and at the end.
-			maxDataLen := streamMaxDataLen(l.Channel())
-			if maxDataLen <= 0 {
-				t.Fatalf("invalid stream max data len")
-			}
-			suffix := []byte(" back at you")
+		maxDataLen := streamMaxDataLen(l.Channel())
+		if maxDataLen <= 0 {
+			t.Fatalf("invalid stream max data len")
+		}
+		suffix := []byte(" back at you")
 		expected := make([]byte, 0, len(msg)+((len(msg)/maxDataLen)+2)*len(suffix))
 		for i := 0; i < len(msg); i++ {
 			if i > 0 && (i%maxDataLen) == 0 {
@@ -740,16 +764,16 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 		if peerCh == nil {
 			t.Fatalf("peer channel nil")
 		}
-			var (
-				peerMu      sync.Mutex
-				peerBuf     *ChannelBufferedReadWriter
-				peerAcc     []byte
-				peerChunks  [][]byte
-				peerAccSize int
-				peerRxCount int
-				peerRxSizes []int
-			)
-			peerBuf = Buffer.CreateBidirectionalBuffer(0, 0, peerCh, func(readyBytes int) {
+		var (
+			peerMu      sync.Mutex
+			peerBuf     *ChannelBufferedReadWriter
+			peerAcc     []byte
+			peerChunks  [][]byte
+			peerAccSize int
+			peerRxCount int
+			peerRxSizes []int
+		)
+		peerBuf = Buffer.CreateBidirectionalBuffer(0, 0, peerCh, func(readyBytes int) {
 			// Debug: show progress if needed.
 			_ = readyBytes
 			if readyBytes <= 0 {
@@ -760,13 +784,13 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 			if rerr != nil || n == 0 {
 				return
 			}
-				peerMu.Lock()
-				peerRxCount++
-				peerRxSizes = append(peerRxSizes, n)
-				peerAcc = append(peerAcc, data[:n]...)
-				peerChunks = append(peerChunks, append([]byte(nil), data[:n]...))
-				peerAccSize = len(peerAcc)
-				ready := peerAccSize >= len(msg)
+			peerMu.Lock()
+			peerRxCount++
+			peerRxSizes = append(peerRxSizes, n)
+			peerAcc = append(peerAcc, data[:n]...)
+			peerChunks = append(peerChunks, append([]byte(nil), data[:n]...))
+			peerAccSize = len(peerAcc)
+			ready := peerAccSize >= len(msg)
 			peerMu.Unlock()
 			if !ready {
 				return
@@ -788,23 +812,23 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 		if initCh == nil {
 			t.Fatalf("init channel nil")
 		}
-			var (
-				initMu  sync.Mutex
-				initBuf *ChannelBufferedReadWriter
-				got     []byte
-				initRxCount int
-			)
-			initBuf = Buffer.CreateBidirectionalBuffer(0, 0, initCh, func(readyBytes int) {
-				data := make([]byte, readyBytes)
-				n, rerr := initBuf.Read(data)
-				if rerr != nil || n == 0 {
-					return
-				}
-				initMu.Lock()
-				initRxCount++
-				got = append(got, data[:n]...)
-				initMu.Unlock()
-			})
+		var (
+			initMu      sync.Mutex
+			initBuf     *ChannelBufferedReadWriter
+			got         []byte
+			initRxCount int
+		)
+		initBuf = Buffer.CreateBidirectionalBuffer(0, 0, initCh, func(readyBytes int) {
+			data := make([]byte, readyBytes)
+			n, rerr := initBuf.Read(data)
+			if rerr != nil || n == 0 {
+				return
+			}
+			initMu.Lock()
+			initRxCount++
+			got = append(got, data[:n]...)
+			initMu.Unlock()
+		})
 
 		_, _ = initBuf.Write(msg)
 		_ = initBuf.Flush()
@@ -817,24 +841,24 @@ func TestIntegration_BufferRoundTrip_Small(t *testing.T) {
 			if done {
 				break
 			}
-				peerMu.Lock()
-				peerSeen := peerAccSize
-				peerCnt := peerRxCount
-				peerMu.Unlock()
-				initMu.Lock()
-				initCnt := initRxCount
-				initMu.Unlock()
-				_ = initCnt
-				_ = peerCnt
-				_ = peerSeen
-				time.Sleep(50 * time.Millisecond)
-			}
-
+			peerMu.Lock()
+			peerSeen := peerAccSize
+			peerCnt := peerRxCount
+			peerMu.Unlock()
 			initMu.Lock()
-			defer initMu.Unlock()
-			if len(got) != len(expected) {
-				t.Fatalf("length mismatch: got %d want %d", len(got), len(expected))
-			}
+			initCnt := initRxCount
+			initMu.Unlock()
+			_ = initCnt
+			_ = peerCnt
+			_ = peerSeen
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		initMu.Lock()
+		defer initMu.Unlock()
+		if len(got) != len(expected) {
+			t.Fatalf("length mismatch: got %d want %d", len(got), len(expected))
+		}
 		for i := range expected {
 			if got[i] != expected[i] {
 				t.Fatalf("byte mismatch at %d", i)

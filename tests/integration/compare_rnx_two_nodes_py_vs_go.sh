@@ -334,8 +334,11 @@ run_pair() {
 
   local out_no_announce="$OUT_DIR/${label}.client.no_announce.out"
   local code_no_announce
+  # Note: Python can often resolve the path even if the listener didn't announce at start,
+  # because a direct PATH_REQUEST/response flow may still succeed between local nodes.
+  # Use a slightly longer timeout to avoid flaky parity diffs.
   code_no_announce="$(run_capture "$out_no_announce" env HOME="$home_a" USERPROFILE="$home_a" \
-    $rnx_cmd $cfg_flag "$node_a_dir" -w 1 "$listener_hash" "echo should_fail")"
+    $rnx_cmd $cfg_flag "$node_a_dir" -w 3 "$listener_hash" "echo should_fail")"
 
   stop_proc "$listener_pid"
 
