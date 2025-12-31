@@ -4,7 +4,8 @@ package interfaces
 
 import (
 	"net"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func setTCPTimeoutsBestEffort(c net.Conn, i2p bool) error {
@@ -30,11 +31,11 @@ func setTCPTimeoutsBestEffort(c net.Conn, i2p bool) error {
 
 	var serr error
 	_ = raw.Control(func(fd uintptr) {
-		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_USER_TIMEOUT, userTimeout*1000)
-		_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
-		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_KEEPIDLE, probeAfter)
-		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_KEEPINTVL, probeInterval)
-		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_KEEPCNT, probes)
+		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_USER_TIMEOUT, userTimeout*1000)
+		_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_KEEPALIVE, 1)
+		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_KEEPIDLE, probeAfter)
+		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_KEEPINTVL, probeInterval)
+		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_KEEPCNT, probes)
 	})
 	return serr
 }
