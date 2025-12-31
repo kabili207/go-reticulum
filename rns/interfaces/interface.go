@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -966,7 +967,11 @@ func (i *Interface) ProcessOutgoing(data []byte) {
 	if strings.EqualFold(i.Type, "TCPClientInterface") && i.tcpClient != nil {
 		if err := i.tcpClient.ProcessOutgoing(data); err != nil {
 			if DiagLogf != nil {
-				DiagLogf(LogError, "TCP send error on %s: %v", i, err)
+				level := LogError
+				if errors.Is(err, errTCPOfflineDetached) || errors.Is(err, errTCPConnNil) {
+					level = LogWarning
+				}
+				DiagLogf(level, "TCP send error on %s: %v", i, err)
 			}
 			return
 		}

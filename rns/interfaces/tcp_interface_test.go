@@ -3,6 +3,7 @@ package interfaces
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 func TestTCPInterface_HDLC_Escape_MatchesLocalHDLC(t *testing.T) {
@@ -78,5 +79,25 @@ func TestTCPClientInterface_SynthesizeTunnelIfNeeded_CallsTunnelSynthesizer(t *t
 	}
 	if ifc.WantsTunnel {
 		t.Fatalf("interface WantsTunnel flag was not cleared")
+	}
+}
+
+func TestTCPClientInterface_ProcessOutgoing_Offline_TriggersReconnect(t *testing.T) {
+	ci := NewTCPClientInitiator(nil, nil, "test", "", 0, false, false)
+	ci.Initiator = true
+	ci.online.Store(false)
+	ci.detached.Store(false)
+	ci.ReconnectWait = 200 * time.Millisecond
+	tries := 0
+	ci.MaxReconnectTry = &tries
+
+	_ = ci.ProcessOutgoing([]byte{0x01})
+
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for time.Now().Before(deadline) && !ci.reconnect.Load() {
+		time.Sleep(1 * time.Millisecond)
+	}
+	if !ci.reconnect.Load() {
+		t.Fatalf("expected reconnectLoop to start")
 	}
 }

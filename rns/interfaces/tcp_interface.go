@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+var (
+	errTCPOfflineDetached = errors.New("tcp iface offline/detached")
+	errTCPConnNil         = errors.New("tcp conn is nil")
+)
+
 // ---- Framing ----
 type HDLC struct{}
 
@@ -69,6 +74,29 @@ type TCPLog interface {
 	Infof(string, ...any)
 	Warnf(string, ...any)
 	Errorf(string, ...any)
+}
+
+type diagTCPLog struct{}
+
+func (diagTCPLog) Debugf(format string, args ...any) { //nolint:revive
+	if DiagLogf != nil {
+		DiagLogf(LogDebug, format, args...)
+	}
+}
+func (diagTCPLog) Infof(format string, args ...any) { //nolint:revive
+	if DiagLogf != nil {
+		DiagLogf(LogInfo, format, args...)
+	}
+}
+func (diagTCPLog) Warnf(format string, args ...any) { //nolint:revive
+	if DiagLogf != nil {
+		DiagLogf(LogWarning, format, args...)
+	}
+}
+func (diagTCPLog) Errorf(format string, args ...any) { //nolint:revive
+	if DiagLogf != nil {
+		DiagLogf(LogError, format, args...)
+	}
 }
 
 type TCPOwner interface {
@@ -379,12 +407,14 @@ func (t *TCPClientInterface) ProcessIncoming(data []byte) {
 
 func (t *TCPClientInterface) ProcessOutgoing(data []byte) error {
 	if !t.online.Load() || t.detached.Load() {
-		return errors.New("tcp iface offline/detached")
+		t.startReconnectAsync()
+		return errTCPOfflineDetached
 	}
 
 	c := t.getConn()
 	if c == nil {
-		return errors.New("tcp conn is nil")
+		t.startReconnectAsync()
+		return errTCPConnNil
 	}
 
 	var framed []byte
@@ -413,6 +443,7 @@ func (t *TCPClientInterface) ProcessOutgoing(data []byte) error {
 			t.Log.Errorf("The contained exception was: %v", err)
 		}
 		t.teardown()
+		t.startReconnectAsync()
 		return err
 	}
 
@@ -593,6 +624,16 @@ func (t *TCPClientInterface) teardown() {
 	}
 }
 
+func (t *TCPClientInterface) startReconnectAsync() {
+	if t == nil || !t.Initiator || t.detached.Load() {
+		return
+	}
+	if t.online.Load() {
+		return
+	}
+	go t.reconnectLoop()
+}
+
 // ---- TCP Server Interface ----
 type TCPServerInterface struct {
 	Owner TCPOwner
@@ -755,7 +796,11 @@ func NewTCPClientInterfaceFromConfig(cfg TCPClientConfig) (*Interface, error) {
 			InboundHandler(raw, ifc)
 		}
 	})
-	client := NewTCPClientInitiator(owner, nil, cfg.Name, cfg.TargetHost, targetPort, cfg.KISSFraming, cfg.I2PTunneled)
+	var log TCPLog
+	if DiagLogf != nil {
+		log = diagTCPLog{}
+	}
+	client := NewTCPClientInitiator(owner, log, cfg.Name, cfg.TargetHost, targetPort, cfg.KISSFraming, cfg.I2PTunneled)
 	if cfg.ReconnectWait > 0 {
 		client.ReconnectWait = cfg.ReconnectWait
 	}
