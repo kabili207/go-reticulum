@@ -1,28 +1,223 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: CI and Release
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  push:
+    branches: ["main"]
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
-
-  build:
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.20'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
 
-    - name: Build
-      run: go build -v ./...
+      - name: Build
+        run: go build -v ./...
 
-    - name: Test
-      run: go test -v ./...
+      - name: Unit tests
+        run: go test -v ./...
+
+      - name: Integration tests (cmd/*)
+        run: go test -tags=integration -v ./cmd/...
+
+  examples_parity:
+    name: Examples parity (Python vs Go)
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Run example parity scripts
+        env:
+          PYTHON: python3
+        run: bash tests/integration/compare_examples_py_vs_go.sh
+
+  build_linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    needs: [check, examples_parity]
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build linux/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          LDFLAGS="-s -w -X github.com/svanichkin/go-reticulum/rns.Version=${VERSION}"
+          OUTROOT="dist/go-reticulum-${VERSION}-linux-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          tools=(rncp rnid rnir rnodeconf rnpath rnprobe rnsd rnstatus rnx)
+          for t in "${tools[@]}"; do
+            go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t" "./cmd/$t"
+          done
+
+          cp -f README.md LICENSE config "$OUTROOT/"
+          tar czvf "go-reticulum-linux-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-reticulum-linux-${{ matrix.arch }}
+          path: go-reticulum-linux-${{ matrix.arch }}.tar.gz
+
+  build_windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: [check, examples_parity]
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build windows/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          LDFLAGS="-s -w -X github.com/svanichkin/go-reticulum/rns.Version=${VERSION}"
+          OUTROOT="dist/go-reticulum-${VERSION}-windows-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          tools=(rncp rnid rnir rnodeconf rnpath rnprobe rnsd rnstatus rnx)
+          for t in "${tools[@]}"; do
+            go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t.exe" "./cmd/$t"
+          done
+
+          cp -f README.md LICENSE config "$OUTROOT/"
+          tar czvf "go-reticulum-windows-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-reticulum-windows-${{ matrix.arch }}
+          path: go-reticulum-windows-${{ matrix.arch }}.tar.gz
+
+  build_darwin:
+    name: Build macOS
+    runs-on: macos-latest
+    needs: [check, examples_parity]
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      VERSION_TAG: ${{ github.ref_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build darwin/${{ matrix.arch }}
+        shell: bash
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          LDFLAGS="-s -w -X github.com/svanichkin/go-reticulum/rns.Version=${VERSION}"
+          OUTROOT="dist/go-reticulum-${VERSION}-darwin-${GOARCH}"
+          mkdir -p "$OUTROOT"
+
+          tools=(rncp rnid rnir rnodeconf rnpath rnprobe rnsd rnstatus rnx)
+          for t in "${tools[@]}"; do
+            go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t" "./cmd/$t"
+          done
+
+          cp -f README.md LICENSE config "$OUTROOT/"
+          tar czvf "go-reticulum-darwin-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-reticulum-darwin-${{ matrix.arch }}
+          path: go-reticulum-darwin-${{ matrix.arch }}.tar.gz
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs:
+      - build_linux
+      - build_windows
+      - build_darwin
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          find . -name '*.tar.gz' -print | while read -r file; do
+            echo "Checksum for $file"
+            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+          done
+          ls -laR
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.sha256
+          generate_release_notes: true
