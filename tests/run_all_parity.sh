@@ -61,6 +61,7 @@ offline_scripts=(
   "$ROOT/tests/integration/compare_rnprobe_py_vs_go.sh"
   "$ROOT/tests/integration/compare_rnx_py_vs_go.sh"
   "$ROOT/tests/integration/compare_rncp_py_vs_go.sh"
+  "$ROOT/tests/integration/compare_examples_py_vs_go.sh"
   "$ROOT/tests/integration/compare_rnsd_py_vs_go.sh"
 )
 for s in "${offline_scripts[@]}"; do
@@ -93,4 +94,3 @@ fi
 
 echo
 echo "[all] OK"
-

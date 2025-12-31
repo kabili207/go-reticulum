@@ -42,6 +42,9 @@ The old locations under `tests/run_*_integration.sh` are kept as tiny shims for 
 - `tests/integration/compare_rnx_py_vs_go.sh` — compares `rnx` CLI behaviour (Python vs Go) offline: `--version`, `-h`, destination validation and exit codes (including `Path not found` timeout), and `-p` identity printing via a shared identity file (`-i`).
   - Requires: `python3`, Go toolchain.
   - Writes logs and diffs to `tests/_logs/<timestamp>/compare_rnx/`.
+- `tests/integration/compare_examples_py_vs_go.sh` — smoke/parity runner for the example programs under `examples/` vs the upstream Python examples under `python/Examples/`.
+  - Requires: `python3`, Go toolchain.
+  - Writes logs to `tests/_logs/<timestamp>/compare_examples/`.
 - `tests/integration/compare_rnx_two_nodes_py_vs_go.sh` — starts two local `rnsd` nodes (Python then Go) using `configs/testing/two_nodes_udp/**`, then exercises `rnx` listener/client mode: `-n` vs `-a`, `-N`, `-b` (no-announce), `--stdout/--stderr` limits and `-m` mirror exit code (summary parity).
   - Requires: `python3`, Go toolchain, ability to bind local UDP sockets.
   - Writes logs and summaries to `tests/_logs/<timestamp>/compare_rnx_two_nodes/`.
