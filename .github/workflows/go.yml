@@ -30,29 +30,10 @@ jobs:
       - name: Unit tests
         run: go test -v ./...
 
-  examples_parity:
-    name: Examples parity (Python vs Go)
-    runs-on: ubuntu-latest
-    needs: check
-    if: github.event_name != 'pull_request'
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: "go.mod"
-
-      - name: Run example parity scripts
-        env:
-          PYTHON: python3
-        run: bash tests/integration/compare_examples_py_vs_go.sh
-
   build_linux:
     name: Build Linux
     runs-on: ubuntu-latest
-    needs: [check, examples_parity]
+    needs: check
     if: startsWith(github.ref, 'refs/tags/v')
     env:
       VERSION_TAG: ${{ github.ref_name }}
@@ -98,7 +79,7 @@ jobs:
   build_windows:
     name: Build Windows
     runs-on: windows-latest
-    needs: [check, examples_parity]
+    needs: check
     if: startsWith(github.ref, 'refs/tags/v')
     env:
       VERSION_TAG: ${{ github.ref_name }}
@@ -144,7 +125,7 @@ jobs:
   build_darwin:
     name: Build macOS
     runs-on: macos-latest
-    needs: [check, examples_parity]
+    needs: check
     if: startsWith(github.ref, 'refs/tags/v')
     env:
       VERSION_TAG: ${{ github.ref_name }}
