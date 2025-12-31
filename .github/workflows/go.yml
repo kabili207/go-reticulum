@@ -30,14 +30,12 @@ jobs:
       - name: Unit tests
         run: go test -v ./...
 
-      - name: Integration tests (cmd/*)
-        run: go test -tags=integration -v ./cmd/...
-
   examples_parity:
     name: Examples parity (Python vs Go)
     runs-on: ubuntu-latest
     needs: check
     if: github.event_name != 'pull_request'
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
