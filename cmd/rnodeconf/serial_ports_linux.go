@@ -2,10 +2,6 @@
 
 package main
 
-import (
-	"path/filepath"
-)
-
 func listSerialPorts() ([]string, error) {
 	patterns := []string{
 		"/dev/serial/by-id/*",
@@ -16,4 +12,3 @@ func listSerialPorts() ([]string, error) {
 	}
 	return globSerialPatterns(patterns), nil
 }
-
