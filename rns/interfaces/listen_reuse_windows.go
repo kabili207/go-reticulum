@@ -6,6 +6,8 @@ import (
 	"context"
 	"net"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 func listenWithReuseAddr(network, address string) (net.Listener, error) {
@@ -14,10 +16,9 @@ func listenWithReuseAddr(network, address string) (net.Listener, error) {
 		var firstErr error
 		_ = c.Control(func(fd uintptr) {
 			// Match Python LocalInterface behaviour on Windows: SO_EXCLUSIVEADDRUSE.
-			_ = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_EXCLUSIVEADDRUSE, 1)
+			_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_EXCLUSIVEADDRUSE, 1)
 		})
 		return firstErr
 	}
 	return lc.Listen(context.Background(), network, address)
 }
-

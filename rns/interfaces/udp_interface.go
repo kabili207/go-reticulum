@@ -147,6 +147,6 @@ func enableUDPBroadcast(conn *net.UDPConn) {
 		return
 	}
 	_ = rawConn.Control(func(fd uintptr) {
-		_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
+		_ = setSockoptIntFD(fd, syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
 	})
 }

@@ -67,7 +67,8 @@ jobs:
             go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t" "./cmd/$t"
           done
 
-          cp -f README.md LICENSE config "$OUTROOT/"
+          cp -f README.md LICENSE "$OUTROOT/"
+          cp -f configs/kitchen_sink/config "$OUTROOT/config"
           tar czvf "go-reticulum-linux-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
 
       - name: Upload artifact
@@ -113,7 +114,8 @@ jobs:
             go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t.exe" "./cmd/$t"
           done
 
-          cp -f README.md LICENSE config "$OUTROOT/"
+          cp -f README.md LICENSE "$OUTROOT/"
+          cp -f configs/kitchen_sink/config "$OUTROOT/config"
           tar czvf "go-reticulum-windows-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
 
       - name: Upload artifact
@@ -146,7 +148,7 @@ jobs:
         env:
           GOOS: darwin
           GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
+          CGO_ENABLED: 1
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
@@ -159,7 +161,8 @@ jobs:
             go build -trimpath -ldflags "$LDFLAGS" -o "$OUTROOT/$t" "./cmd/$t"
           done
 
-          cp -f README.md LICENSE config "$OUTROOT/"
+          cp -f README.md LICENSE "$OUTROOT/"
+          cp -f configs/kitchen_sink/config "$OUTROOT/config"
           tar czvf "go-reticulum-darwin-${GOARCH}.tar.gz" -C dist "$(basename "$OUTROOT")"
 
       - name: Upload artifact

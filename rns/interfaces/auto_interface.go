@@ -361,9 +361,9 @@ func listenDiscoveryPacket(mcastAddr string, linkScope bool, ifname string, port
 		Control: func(network, address string, c syscall.RawConn) error {
 			var ctrlErr error
 			if err := c.Control(func(fd uintptr) {
-				_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				_ = setSockoptIntFD(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
 				// Best-effort; may not exist on some platforms.
-				_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, 0x0200 /* SO_REUSEPORT */, 1)
+				_ = setSockoptIntFD(fd, syscall.SOL_SOCKET, 0x0200 /* SO_REUSEPORT */, 1)
 			}); err != nil {
 				ctrlErr = err
 			}
@@ -1007,15 +1007,15 @@ func joinIPv6Multicast(pc net.PacketConn, group string, ifIndex int) error {
 			sockErr = errors.New("invalid multicast group")
 			return
 		}
-		var mreq syscall.IPv6Mreq
-		copy(mreq.Multiaddr[:], ip.To16())
-		mreq.Interface = uint32(ifIndex)
-		sockErr = syscall.SetsockoptIPv6Mreq(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_JOIN_GROUP, &mreq)
-	})
-	if err != nil {
-		return err
-	}
-	return sockErr
+			var mreq syscall.IPv6Mreq
+			copy(mreq.Multiaddr[:], ip.To16())
+			mreq.Interface = uint32(ifIndex)
+			sockErr = setSockoptIPv6MreqFD(fd, syscall.IPPROTO_IPV6, syscall.IPV6_JOIN_GROUP, &mreq)
+		})
+		if err != nil {
+			return err
+		}
+		return sockErr
 }
 
 func equal32(a, b []byte) bool {
