@@ -16,7 +16,9 @@ func listenWithReuseAddr(network, address string) (net.Listener, error) {
 		var firstErr error
 		_ = c.Control(func(fd uintptr) {
 			// Match Python LocalInterface behaviour on Windows: SO_EXCLUSIVEADDRUSE.
-			_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_EXCLUSIVEADDRUSE, 1)
+			// x/sys/windows does not expose SO_EXCLUSIVEADDRUSE on all versions; use the Winsock value (0x0004).
+			const soExclusiveAddrUse = 0x0004
+			_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, soExclusiveAddrUse, 1)
 		})
 		return firstErr
 	}
