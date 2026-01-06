@@ -636,12 +636,12 @@ func (st *autoState) autoDataLoop(parent *Interface, ifname string, c *net.UDPCo
 		if n <= 0 {
 			continue
 		}
-		peerKey := from.Addr().String()
 		ip := from.Addr().AsSlice()
 		peerIP := net.IP(ip).To16()
 		if peerIP == nil {
 			continue
 		}
+		peerKey := peerIP.String()
 
 		st.mu.Lock()
 		peerIfc := st.spawned[peerKey]
