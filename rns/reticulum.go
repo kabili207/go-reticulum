@@ -1374,9 +1374,11 @@ func (r *Reticulum) bringUpSystemInterfaces() error {
 		}
 
 		if strings.EqualFold(ifType, "AutoInterface") {
+			desiredOut := ifc.OUT
 			if err := ifc.ConfigureAutoInterface(kv); err != nil {
 				return fmt.Errorf("Interface %q AutoInterface config error: %w", name, err)
 			}
+			ifc.OUT = desiredOut
 			if err := ifc.StartAutoInterface(); err != nil {
 				return fmt.Errorf("Interface %q AutoInterface start error: %w", name, err)
 			}
@@ -1869,9 +1871,11 @@ func (r *Reticulum) startInterfaceFromConfig(name string, kv map[string]string) 
 	}
 
 	if strings.EqualFold(ifType, "AutoInterface") {
+		desiredOut := ifc.OUT
 		if err := ifc.ConfigureAutoInterface(kv); err != nil {
 			return false, fmt.Errorf("Interface %q AutoInterface config error: %w", name, err)
 		}
+		ifc.OUT = desiredOut
 		if err := ifc.StartAutoInterface(); err != nil {
 			return false, fmt.Errorf("Interface %q AutoInterface start error: %w", name, err)
 		}
