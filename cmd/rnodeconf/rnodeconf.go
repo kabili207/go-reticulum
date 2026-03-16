@@ -1066,42 +1066,42 @@ func main() {
 		}
 		fmt.Printf("Generated signing key at %s\n", paths.SignerKeyPath)
 		return
-		case showSigningKey:
-			// Python parity: print both the EEPROM signing public key (RSA, SPKI DER)
-			// and the device signing public key (last 32 bytes of Identity public key,
-			// colon-delimited).
-			signerDER, err := os.ReadFile(paths.SignerKeyPath)
+	case showSigningKey:
+		// Python parity: print both the EEPROM signing public key (RSA, SPKI DER)
+		// and the device signing public key (last 32 bytes of Identity public key,
+		// colon-delimited).
+		signerDER, err := os.ReadFile(paths.SignerKeyPath)
+		if err != nil {
+			fmt.Println("Could not load EEPROM signing key")
+		} else {
+			key, err := parseSignerKeyDER(signerDER)
 			if err != nil {
-				fmt.Println("Could not load EEPROM signing key")
+				fmt.Println("Could not deserialize signing key")
+				fmt.Println(err.Error())
+			} else if pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey); err != nil {
+				fmt.Println("Could not serialize signing key")
+				fmt.Println(err.Error())
 			} else {
-				key, err := parseSignerKeyDER(signerDER)
-				if err != nil {
-					fmt.Println("Could not deserialize signing key")
-					fmt.Println(err.Error())
-				} else if pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey); err != nil {
-					fmt.Println("Could not serialize signing key")
-					fmt.Println(err.Error())
-				} else {
-					fmt.Println("EEPROM Signing Public key:")
-					fmt.Println(hex.EncodeToString(pubDER))
-				}
+				fmt.Println("EEPROM Signing Public key:")
+				fmt.Println(hex.EncodeToString(pubDER))
 			}
+		}
 
-			id, err := rns.IdentityFromFile(paths.DeviceKeyPath)
-			if err != nil {
+		id, err := rns.IdentityFromFile(paths.DeviceKeyPath)
+		if err != nil {
+			fmt.Println("Could not load device signing key")
+		} else {
+			pubAll := id.GetPublicKey()
+			if len(pubAll) < 64 {
 				fmt.Println("Could not load device signing key")
 			} else {
-				pubAll := id.GetPublicKey()
-				if len(pubAll) < 64 {
-					fmt.Println("Could not load device signing key")
-				} else {
-					fmt.Println("")
-					fmt.Println("Device Signing Public key:")
-					fmt.Println(hexWithColons(pubAll[32:]))
-				}
+				fmt.Println("")
+				fmt.Println("Device Signing Public key:")
+				fmt.Println(hexWithColons(pubAll[32:]))
 			}
-			return
 		}
+		return
+	}
 
 	selectedVersion, firmwareURL := "", ""
 	if fwVersion != "" {
@@ -1578,26 +1578,26 @@ func main() {
 				os.Exit(2)
 			}
 		}
-			if signFlag {
-				if !node.Provisioned {
-					fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot create device signature")
-					os.Exit(79)
-				}
+		if signFlag {
+			if !node.Provisioned {
+				fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot create device signature")
+				os.Exit(79)
+			}
 			if len(node.Checksum) != 16 {
 				fmt.Fprintln(os.Stderr, "No EEPROM checksum present, cannot sign device")
 				os.Exit(78)
 			}
-				der, err := ensureSignerKey(paths)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Could not load local signing key")
-					os.Exit(78)
-				}
-				priv, err := parseSignerKeyDER(der)
-				if err != nil || priv.N.BitLen() != 1024 {
-					fmt.Fprintln(os.Stderr, "Could not deserialize local signing key")
-					os.Exit(78)
-				}
-				checksumHash := sha256.Sum256(node.Checksum)
+			der, err := ensureSignerKey(paths)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Could not load local signing key")
+				os.Exit(78)
+			}
+			priv, err := parseSignerKeyDER(der)
+			if err != nil || priv.N.BitLen() != 1024 {
+				fmt.Fprintln(os.Stderr, "Could not deserialize local signing key")
+				os.Exit(78)
+			}
+			checksumHash := sha256.Sum256(node.Checksum)
 			sig, err := rsa.SignPSS(rand.Reader, priv, crypto.SHA256, checksumHash[:], nil)
 			if err != nil || len(sig) != 128 {
 				fmt.Fprintln(os.Stderr, "Error while signing EEPROM")
@@ -1636,20 +1636,20 @@ func main() {
 				fmt.Printf("The target firmware hash is: %x\n", node.FirmwareHashTarget)
 			}
 		}
-			if getDeviceHash {
-				if !node.Provisioned {
-					fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot get firmware hash")
-					os.Exit(77)
-				}
-				if len(node.FirmwareHash) > 0 {
-					fmt.Printf("The actual firmware hash is: %x\n", node.FirmwareHash)
-				}
+		if getDeviceHash {
+			if !node.Provisioned {
+				fmt.Fprintln(os.Stderr, "This device has not been provisioned yet, cannot get firmware hash")
+				os.Exit(77)
 			}
+			if len(node.FirmwareHash) > 0 {
+				fmt.Printf("The actual firmware hash is: %x\n", node.FirmwareHash)
+			}
+		}
 
-			// Modes.
-			if normalModeFlag {
-				if !node.Provisioned {
-					fmt.Fprintln(os.Stderr, "This device contains a valid firmware, but EEPROM is invalid.")
+		// Modes.
+		if normalModeFlag {
+			if !node.Provisioned {
+				fmt.Fprintln(os.Stderr, "This device contains a valid firmware, but EEPROM is invalid.")
 				fmt.Fprintln(os.Stderr, "Probably the device has not been initialised, or the EEPROM has been erased.")
 				fmt.Fprintln(os.Stderr, "Please correctly initialise the device and try again!")
 				os.Exit(2)
@@ -2675,8 +2675,8 @@ const (
 
 // For models, in Go it's convenient to use a struct:
 type ModelInfo struct {
-	MinFreq    int    // Hz
-	MaxFreq    int    // Hz
+	MinFreq    int64  // Hz
+	MaxFreq    int64  // Hz
 	MaxOutput  int    // dBm
 	BandString string // "410-525 MHz"
 	FWFile     string // firmware filename or ""
@@ -3439,15 +3439,15 @@ func (n *RNode) verifyDeviceSignature(paths storagePaths) {
 		local  bool
 	}
 
-		// Local signing key (if present).
-		if fileExists(paths.SignerKeyPath) {
-			if der, err := os.ReadFile(paths.SignerKeyPath); err == nil {
-				if priv, err := parseSignerKeyDER(der); err == nil {
-					if priv.N.BitLen() == 1024 {
-						candidates = append(candidates, struct {
-							vendor string
-							pub    *rsa.PublicKey
-							local  bool
+	// Local signing key (if present).
+	if fileExists(paths.SignerKeyPath) {
+		if der, err := os.ReadFile(paths.SignerKeyPath); err == nil {
+			if priv, err := parseSignerKeyDER(der); err == nil {
+				if priv.N.BitLen() == 1024 {
+					candidates = append(candidates, struct {
+						vendor string
+						pub    *rsa.PublicKey
+						local  bool
 					}{vendor: "LOCAL", pub: &priv.PublicKey, local: true})
 				}
 			}
@@ -3646,7 +3646,7 @@ func parseModelCode(query string) (byte, error) {
 	return byte(val), nil
 }
 
-func hzToMHz(hz int) float64 {
+func hzToMHz(hz int64) float64 {
 	if hz == 0 {
 		return 0
 	}

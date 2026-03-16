@@ -82,16 +82,16 @@ const (
 )
 
 const (
-	FREQ_MIN                = 137000000
-	FREQ_MAX                = 3000000000
-	RSSI_OFFSET             = 157
-	REQUIRED_FW_VER_MAJ     = 1
-	REQUIRED_FW_VER_MIN     = 52
-	BLE_DETECT_TIMEOUT      = 5 * time.Second
-	TCP_DETECT_TIMEOUT      = 5 * time.Second
-	DETECTION_POLL_INTERVAL = 100 * time.Millisecond
-	MAX_CHUNK_LEN           = 1024 * 32 // Python MAX_CHUNK = 32768
-	CALLSIGN_MAX_LEN        = 32
+	FREQ_MIN                uint32 = 137000000
+	FREQ_MAX                uint32 = 3000000000
+	RSSI_OFFSET                    = 157
+	REQUIRED_FW_VER_MAJ            = 1
+	REQUIRED_FW_VER_MIN            = 52
+	BLE_DETECT_TIMEOUT             = 5 * time.Second
+	TCP_DETECT_TIMEOUT             = 5 * time.Second
+	DETECTION_POLL_INTERVAL        = 100 * time.Millisecond
+	MAX_CHUNK_LEN                  = 1024 * 32 // Python MAX_CHUNK = 32768
+	CALLSIGN_MAX_LEN               = 32
 
 	QSNRMinBase = -9.0
 	QSNRMax     = 6.0
@@ -401,20 +401,20 @@ type RNodeInterface struct {
 
 	tr Transport
 
-	online     atomic.Bool
-	ready      atomic.Bool
-	detected   atomic.Bool
-	fwMaj      atomic.Uint32
-	fwMin      atomic.Uint32
+	online            atomic.Bool
+	ready             atomic.Bool
+	detected          atomic.Bool
+	fwMaj             atomic.Uint32
+	fwMin             atomic.Uint32
 	radioState        atomic.Uint32 // reported state (CMD_RADIO_STATE)
 	desiredRadioState atomic.Uint32 // configured/desired state
 
 	// reported params
-	rFreq uint32
-	rBW   uint32
-	rTXP  byte
-	rSF   byte
-	rCR   byte
+	rFreq    uint32
+	rBW      uint32
+	rTXP     byte
+	rSF      byte
+	rCR      byte
 	repFreq  atomic.Bool
 	repBW    atomic.Bool
 	repTXP   atomic.Bool
@@ -423,10 +423,10 @@ type RNodeInterface struct {
 	repState atomic.Bool
 
 	// stats (partial)
-	rssi    int32
-	snr     float32
-	qSNR    float32
-	bitrate float64
+	rssi        int32
+	snr         float32
+	qSNR        float32
+	bitrate     float64
 	repStatRSSI atomic.Bool
 	repStatSNR  atomic.Bool
 
