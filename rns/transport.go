@@ -2524,6 +2524,8 @@ func Outbound(p *Packet) bool {
 			// packets from local clients to remote destinations.
 			if hops > 1 || connectedShared {
 				// add transport header (HEADER_2 + next hop id)
+				Logf(LogNotice, "Outbound: path-based HEADER_2 rewrite (hops=%d, shared=%v, nextHop=%x, dest=%x, ifc=%s)",
+					hops, connectedShared, entry.NextHop, p.DestinationHash, outIfc)
 				if p.HeaderType == Header1 {
 					flags := byte(Header2)<<6 |
 						byte(TransportDirect)<<4 |
@@ -2541,6 +2543,7 @@ func Outbound(p *Packet) bool {
 				}
 			} else {
 				// single hop: send directly
+				Logf(LogNotice, "Outbound: direct HEADER_1 send (hops=%d, ifc=%s)", hops, outIfc)
 				packetSent(p)
 				Transmit(outIfc, p.Raw)
 				sent = true
@@ -2866,9 +2869,17 @@ func Inbound(raw []byte, ifc *Interface) {
 		// decisions. Shared instances will typically have no local link, and will
 		// fall back to link_table forwarding below.
 		if p.DestinationType == DestLink {
-			if link := findLinkByID(p.DestinationHash); link != nil {
+			link := findLinkByID(p.DestinationHash)
+			if link != nil {
 				link.Receive(p)
 				return
+			}
+			Logf(LogDebug, "Inbound DestLink: no local link for %x ctx=0x%02x (pending=%d active=%d)",
+				p.DestinationHash, p.Context, len(PendingLinks), len(ActiveLinks))
+			for i, pl := range PendingLinks {
+				if pl != nil {
+					Logf(LogExtreme, "  PendingLink[%d]: linkID=%x status=%d", i, pl.LinkID, pl.Status)
+				}
 			}
 		}
 
