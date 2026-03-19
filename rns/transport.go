@@ -2517,11 +2517,12 @@ func Outbound(p *Packet) bool {
 			hops := entry.Hops
 
 			connectedShared := Owner != nil && Owner.IsConnectedToSharedInstance
-			// When connected to a shared instance, always send header1 packets to the
-			// shared instance and let it apply transport routing and headers. If the
-			// local client wraps packets in header2, the shared instance can reject
-			// them if the transport ID does not match.
-			if hops > 1 && !connectedShared {
+			// When the path has more than one hop, inject the packet into transport
+			// by rewriting to HEADER_2 with the next-hop transport ID.
+			// When connected to a shared instance, we also rewrite single-hop
+			// packets to HEADER_2 because rnsd does not forward plain HEADER_1
+			// packets from local clients to remote destinations.
+			if hops > 1 || connectedShared {
 				// add transport header (HEADER_2 + next hop id)
 				if p.HeaderType == Header1 {
 					flags := byte(Header2)<<6 |
