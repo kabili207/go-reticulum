@@ -100,8 +100,12 @@ var (
 
 	LocalClientInterfaces []*Interface
 
-	JobsLocked       bool
-	JobsRunning      bool
+	// jobsMu serialises Jobs() (write-lock) against Inbound/Outbound
+	// (read-lock).  This replaces the old JobsLocked/JobsRunning booleans
+	// which were bare flags with no memory barriers — a data race that
+	// caused silent deadlocks when multiple goroutines called Outbound
+	// concurrently (e.g. teardown packets from watchdog goroutines).
+	jobsMu sync.RWMutex
 	JobInterval      = 250 * time.Millisecond
 	LinksLastChecked time.Time
 	LinksCheckInt    = time.Second
@@ -562,12 +566,7 @@ func WithAnnounceAttachedInterface(ifc *Interface) AnnounceOption {
 func Start(owner *Reticulum) {
 	StartTime = time.Now()
 	Owner = owner
-	// JobsRunning is a "Jobs() currently executing" guard used by Inbound/Outbound.
-	// It must be false during startup, otherwise startup-time Outbound calls (eg.
-	// probe destination announce) can deadlock waiting for Jobs() to finish before
-	// the job loop has even started.
-	JobsRunning = false
-	JobsLocked = false
+	// jobsMu is initialized at declaration; no special startup needed.
 	// Python: Transport.cache_last_cleaned = time.time() + 60
 	LastCacheCleaned = time.Now().Add(60 * time.Second)
 	ensureTransportIdentity()
@@ -1214,12 +1213,18 @@ func Jobs() {
 	var outgoing []*Packet
 	pathRequests := make(map[hashKey]*Interface)
 	var culled bool
-	JobsRunning = true
 
+	// TryLock: if Inbound/Outbound is active, skip this job cycle rather
+	// than blocking.  This preserves the original semantics where Jobs()
+	// yielded to IO traffic (the old "if JobsLocked { return }" pattern)
+	// and avoids writer-starvation of the RWMutex blocking all new readers.
+	if !jobsMu.TryLock() {
+		return
+	}
 	defer func() {
-		JobsRunning = false
+		jobsMu.Unlock()
 
-		// send collected packets
+		// send collected packets (outside the lock so Outbound can proceed)
 		for _, p := range outgoing {
 			_ = p.Send()
 		}
@@ -1236,10 +1241,6 @@ func Jobs() {
 			}
 		}
 	}()
-
-	if JobsLocked {
-		return
-	}
 	shouldGC := false
 
 	now := time.Now()
@@ -2469,15 +2470,10 @@ func transmitAnnounce(ifc *Interface, raw []byte, hops uint8) {
 // -------- outbound packets --------
 
 func Outbound(p *Packet) bool {
-	// wait until Jobs() is not executing
-	for JobsRunning {
-		time.Sleep(500 * time.Microsecond)
-	}
-
-	JobsLocked = true
+	jobsMu.RLock()
 	var sent bool
 	defer func() {
-		JobsLocked = false
+		jobsMu.RUnlock()
 		if sent && Owner != nil {
 			Owner.ShouldPersistData()
 		}
@@ -2713,22 +2709,17 @@ func Inbound(raw []byte, ifc *Interface) {
 		}
 	}
 
-	// wait until Jobs() is not executing
-	for JobsRunning {
-		time.Sleep(500 * time.Microsecond)
-	}
-
-	if TransportIdentity == nil {
-		return
-	}
-
-	JobsLocked = true
+	jobsMu.RLock()
 	defer func() {
-		JobsLocked = false
+		jobsMu.RUnlock()
 		if Owner != nil {
 			Owner.ShouldPersistData()
 		}
 	}()
+
+	if TransportIdentity == nil {
+		return
+	}
 
 	p := NewPacket(nil, raw)
 	if !p.Unpack() {
@@ -3862,7 +3853,10 @@ func handlePendingAndActiveLinks(pathReqs map[hashKey]*Interface) {
 			continue
 		}
 		if !link.lastInbound.IsZero() && now.Sub(link.lastInbound) > link.StaleTime {
-			link.Teardown()
+			// Teardown in a goroutine: this function runs under jobsMu
+			// write lock, and Teardown → sendTeardownPacket → Outbound
+			// needs jobsMu read lock — calling it here would deadlock.
+			go link.Teardown()
 			continue
 		}
 		if link.destination != nil && !HasPath(link.destination.Hash()) {

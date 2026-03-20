@@ -1552,9 +1552,9 @@ func (l *Link) watchdogLoop() {
 
 func (l *Link) checkTimeouts() {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	if l.Status == LinkClosed {
+		l.mu.Unlock()
 		return
 	}
 
@@ -1562,8 +1562,11 @@ func (l *Link) checkTimeouts() {
 	if (l.Status == LinkPending || l.Status == LinkHandshake) && !l.requestTime.IsZero() && l.estTimeout > 0 {
 		if time.Since(l.requestTime) >= l.estTimeout {
 			Logf(LogVerbose, "Link establishment timed out: linkID=%x elapsed=%v timeout=%v", l.LinkID, time.Since(l.requestTime), l.estTimeout)
-			l.teardown(LinkTimeout)
+			l.mu.Unlock()
+			go l.teardown(LinkTimeout)
+			return
 		}
+		l.mu.Unlock()
 		return
 	}
 
@@ -1576,6 +1579,7 @@ func (l *Link) checkTimeouts() {
 		last = l.activatedAt
 	}
 	if last.IsZero() {
+		l.mu.Unlock()
 		return
 	}
 
@@ -1602,8 +1606,12 @@ func (l *Link) checkTimeouts() {
 	// Python: once stale, close after an additional timeout interval.
 	if l.Status == LinkStale && time.Since(last) >= l.StaleTime+timeout {
 		Log("Link watchdog stale timeout reached, closing link", LOG_WARNING)
-		l.teardown(LinkTimeout)
+		l.mu.Unlock()
+		go l.teardown(LinkTimeout)
+		return
 	}
+
+	l.mu.Unlock()
 }
 
 func (l *Link) rttTimeout() time.Duration {
@@ -1791,9 +1799,15 @@ func (l *Link) handleRequestPacket(packet *Packet) {
 		Log(fmt.Sprintf("%s received malformed request payload: %v", l, err), LOG_WARNING)
 		return
 	}
-	if l.handleRequestAndReportAllowed(packet.GetTruncatedHash(), unpacked, packet) {
-		l.ProvePacket(packet)
-	}
+	// Dispatch the request handler in a goroutine so that slow response
+	// generators (e.g. database queries) do not block the transport's
+	// packet processing. This is safe because Inbound/Outbound use an
+	// RWMutex that allows concurrent read-side callers.
+	go func() {
+		if l.handleRequestAndReportAllowed(packet.GetTruncatedHash(), unpacked, packet) {
+			l.ProvePacket(packet)
+		}
+	}()
 }
 
 func (l *Link) handleRequestAndReportAllowed(requestID []byte, unpacked []any, packet *Packet) bool {
